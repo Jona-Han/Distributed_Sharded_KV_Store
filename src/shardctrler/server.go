@@ -19,12 +19,23 @@ type ShardCtrler struct {
 
 	logger *Logger
 
+	clerkLastSeq   map[int64]int64 // To check for duplicate requests
+	notifyChans    map[int64]chan Op
+	lastApplied int
+
 	configs []Config // indexed by config num
 }
 
 
 type Op struct {
-
+	Operation 	string
+	ClerkId		int64
+	Seq 		int64
+	Servers map[int][]string
+	GIDs 		[]int
+	Shard int
+	GID   int
+	Num int
 }
 
 
@@ -32,21 +43,105 @@ type Op struct {
 // Shards divided as evenly as possible, moving as few shards as possible
 // Allows reuse of GID
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
+	op := Op {
+		Operation:	"Join",
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		Servers:	args.Servers,
+	}
 
+	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
+	reply.WrongLeader = result.WrongLeader
+	reply.Err = result.Err
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
+	op := Op {
+		Operation:	"Leave",
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		GIDs:		args.GIDs,
+	}
 
+	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
+	reply.WrongLeader = result.WrongLeader
+	reply.Err = result.Err
 }
 
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
+	op := Op {
+		Operation:	"Move",
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		Shard:		args.Shard,
+		GID:		args.GID,
+	}
 
+	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
+	reply.WrongLeader = result.WrongLeader
+	reply.Err = result.Err
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-
+	op := Op {
+		Operation:	"Query",
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		Num:		args.Num,
+	}
+	
+	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
+	reply.WrongLeader = result.WrongLeader
+	reply.Err = result.Err
+	reply.Config = result.Config
 }
+
+func (sc *ShardCtrler) checkIfLeaderAndSendOp(op Op, clerkId int64, seq int64) CommonReply {
+	reply := CommonReply{}
+
+	sc.mu.Lock()
+	// first check if this server is the leader
+	if _, isLeader := sc.rf.GetState(); !isLeader {
+		sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d is not the leader for %s request on servers", sc.me, op.Operation))
+		reply.WrongLeader = true
+		sc.mu.Unlock()
+		return reply
+	}
+
+	ch := make(chan Op, 1)
+	sc.notifyChans[clerkId] = ch
+	sc.rf.Start(op)
+	sc.mu.Unlock()
+
+	// set up a timer to avoid waiting indefinitely.
+	timer := time.NewTimer(WaitTimeOut)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C: // timer expires
+		sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d timed out waiting for %s request", sc.me, op.Operation))
+		reply.Err = ErrTimeOut
+	case resultOp := <-ch: // wait for the operation to be applied
+		// check if the operation corresponds to the request
+		if resultOp.ClerkId != clerkId || resultOp.Seq != seq {
+			sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d received a non-matching %s result", sc.me, op.Operation))
+			reply.WrongLeader = true
+		} else {
+			if (op.Operation == "Query") {
+				configNum := resultOp.Num
+				if configNum == -1 || configNum >= len(sc.configs) {
+					reply.Config = sc.configs[len(sc.configs) - 1]
+				} else {
+					reply.Config = sc.configs[configNum]
+				}
+			}
+			sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d successfully completed %s request", sc.me, op.Operation))
+		}
+	}
+	return reply
+} 
+
 
 // the tester calls Kill() when a ShardCtrler instance won't
 // be needed again. you are not required to do anything
@@ -89,7 +184,61 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
+	// Your code here.
+	sc.clerkLastSeq = make(map[int64]int64)
+	sc.notifyChans = make(map[int64]chan Op)
+
+	go sc.applier()
+
 	return sc
+}
+
+
+func (sc *ShardCtrler) applier() {
+	// continuously process messages from the applyCh channel
+	for !sc.killed() {
+		msg := <-sc.applyCh // wait for a message from Raft
+		if msg.CommandValid {
+			sc.mu.Lock()
+			if msg.CommandIndex <= sc.lastApplied {
+				sc.mu.Unlock()
+				continue
+			}
+
+			op := msg.Command.(Op)
+
+			// check if the operation is the latest from the clerk
+			lastSeq, found := sc.clerkLastSeq[op.ClerkId]
+			if !found || lastSeq < op.Seq {
+				// apply the operation to the state machine
+				sc.applyOperation(op)
+				sc.clerkLastSeq[op.ClerkId] = op.Seq
+			}
+
+			// notify the waiting goroutine if it's present
+			if ch, ok := sc.notifyChans[op.ClerkId]; ok {
+				select {
+				case ch <- op: // notify the waiting goroutine
+				    sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d", sc.me, op.ClerkId))
+				default:
+					// if the channel is already full, skip to prevent blocking.
+				}
+			}
+			sc.lastApplied = msg.CommandIndex
+			sc.mu.Unlock()
+		}
+	}
+}
+
+func (sc *ShardCtrler) applyOperation(op Op) {
+	switch op.Operation {
+	case "Join":
+		sc.applyJoin(op)
+	case "Leave":
+		sc.applyLeave(op)
+	case "Move":
+		sc.applyMove(op)
+	}
 }
 
 
