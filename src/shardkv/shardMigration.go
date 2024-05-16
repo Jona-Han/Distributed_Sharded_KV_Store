@@ -2,22 +2,27 @@ package shardkv
 
 import "cpsc416/shardctrler"
 
-// Sends shard to shards in gid
-func (kv *ShardKV) SendShard(gid int, db map[string]string, config shardctrler.Config) {
-	args := ReceiveShardArgs {
-		Db: db,
-		Config: config,
-		GID: kv.gid,
+
+func (kv *ShardKV) GetShard(gid int, shardsToRequest map[int]bool, newConfig shardctrler.Config, responseChan chan RequestShardReply) {
+	args := RequestShardArgs {
+		Config: newConfig,
+		ShardsRequested: shardsToRequest,
 	}
-	
 	for {
-		if servers, ok := config.Groups[gid]; ok {
+		kv.mu.Lock()
+		if _, isLeader := kv.rf.GetState(); !isLeader || kv.config.Num > newConfig.Num {
+			defer kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
+		if servers, ok := kv.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
 				srv := kv.make_end(servers[si])
-				var reply ReceiveShardReply
+				var reply RequestShardReply
 		
-				ok := srv.Call("ShardKV.ReceiveShard", &args, &reply)
+				ok := srv.Call("ShardKV.RequestShard", &args, &reply)
 				if ok && reply.Err == OK {
+					responseChan <- reply
 					return
 				}
 			}
@@ -27,28 +32,25 @@ func (kv *ShardKV) SendShard(gid int, db map[string]string, config shardctrler.C
 	}
 }
 
-func (kv *ShardKV) ReceiveShard(args *ReceiveShardArgs, reply *ReceiveShardReply) {
+func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply) {
 	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
-		kv.mu.Unlock()
 		return
 	}
 
-	op := Op {
-		Operation: "InstallMigration",
-		DB: make(map[string]string),
-		NewConfig: args.Config,
-		GID:	args.GID,
+	if kv.config.Num < args.Config.Num {
+		reply.Err = ErrOutdated
+		return
 	}
 
-	for key,value := range args.Db {
-		op.DB[key] = value
+	reply.Data = make(map[string]string)
+	for key, value := range kv.db {
+		if args.ShardsRequested[key2shard(key)] {
+			reply.Data[key] = value
+		}
 	}
-
-	kv.rf.Start(op)
 
 	reply.Err = OK
-
-	kv.mu.Unlock()
 }

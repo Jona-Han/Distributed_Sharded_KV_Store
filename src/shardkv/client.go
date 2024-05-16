@@ -36,7 +36,6 @@ type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
-	// You will have to modify this struct.
 	clerkId        int64
 	seq 		   int64
 
@@ -54,7 +53,6 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(Clerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
-	// You'll have to add code here.
 
 	logger, err := NewLogger(1)
 	if err != nil {
@@ -64,6 +62,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 
 	ck.seq = 0
 	ck.clerkId = nrand()
+	ck.config = ck.sm.Query(-1)
 
 	return ck
 }
@@ -72,11 +71,17 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
 // You will have to modify this function.
-func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
+func (ck *Clerk) Get(key string) string {\
+	args := GetArgs{
+		Key:		key,
+		ClerkId: 	ck.clerkId,
+		Seq :	 	atomic.AddInt64(&ck.seq, 1),
+		ConfigNum:	ck.config.Num,
+	}
+	args.
 	args.ClerkId = ck.clerkId
-	args.Seq = ck.seq
+	args.Seq = atomic.AddInt64(&ck.seq, 1)
+	args.ConfigNum 
 
 	for {
 		shard := key2shard(key)
@@ -89,8 +94,7 @@ func (ck *Clerk) Get(key string) string {
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d Get operation success for key %s with value %s", ck.clerkId, key, reply.Value))
-					ck.seq++
+					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d Get operation success for seq %d", ck.clerkId, ck.seq))
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
@@ -110,12 +114,14 @@ func (ck *Clerk) Get(key string) string {
 // shared by Put and Append.
 // You will have to modify this function.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
-	args.ClerkId = ck.clerkId
-	args.Seq = ck.seq
+	args := PutAppendArgs{
+		Key:		key,
+		Value:		value,
+		ClerkId: 	ck.clerkId,
+		Op:			op,
+		Seq :	 	atomic.AddInt64(&ck.seq, 1),
+		ConfigNum:	ck.config.Num,
+	}
 
 	for {
 		shard := key2shard(key)
@@ -127,8 +133,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				// ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d sent %s operation for key %s to server %v", ck.clerkId, args.Op, key, si))
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
-					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d %s operation success for key %s", ck.clerkId, args.Op, key))
-					ck.seq++
+					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d %s operation success for seq %d", ck.clerkId, args.Op, ck.seq))
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {

@@ -17,11 +17,13 @@ const (
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeOut 	   = "ErrTimeOut"
+	ErrOutdated    = "ErrOutdated"
+	ErrConfigOutdated = "ErrConfigOutdated"
 )
 
 const WaitTimeOut = 2000 * time.Millisecond
 
-const Debug = false
+const Debug = true
 
 type Err string
 
@@ -36,11 +38,10 @@ type PutAppendArgs struct {
 	Key   string
 	Value string
 	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+
 	ClerkId	int64
 	Seq int64
+	ConfigNum int
 }
 
 type PutAppendReply struct {
@@ -49,9 +50,9 @@ type PutAppendReply struct {
 
 type GetArgs struct {
 	Key string
-	// You'll have to add definitions here.
 	ClerkId	int64
 	Seq int64
+	ConfigNum int
 }
 
 type GetReply struct {
@@ -59,12 +60,12 @@ type GetReply struct {
 	Value string
 }
 
-type ReceiveShardArgs struct {
-	Db	map[string]string
-	Config shardctrler.Config
-	GID		int
+type RequestShardArgs struct {
+	Config 			shardctrler.Config
+	ShardsRequested map[int]bool
 }
 
-type ReceiveShardReply struct {
+type RequestShardReply struct {
+	Data 	map[string]string
 	Err	Err
 }

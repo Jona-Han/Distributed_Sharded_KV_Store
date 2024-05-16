@@ -43,82 +43,76 @@ type ShardKV struct {
 	sm			*shardctrler.Clerk
 	config   	shardctrler.Config
 
-	clerkLastSeq   map[int64]int64 // To check for duplicate requests
+	clerkLastSeq   map[int64]int64 		// To check for duplicate requests
 	notifyChans    map[int64]chan Op
 	lastApplied    int
 
-	db             map[string]string
-	waitingToBeReceived map[int]bool
+	db             		map[string]string
+	MIP 				bool 				// Migration in progress
+	commandQueue 		[]Op				// Queue for operations during a migration
+
+	cache 				map[int64]string
 }
 
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	kv.mu.Lock()
-	if (len(kv.waitingToBeReceived) != 0) {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received get operation for key %s but MIP", kv.me, args.Key))
-		reply.Err = ErrWrongGroup
-		kv.mu.Unlock()
-		return
+	op := Op {
+		Operation:	"Get",
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		Key:		args.Key,
 	}
-
-	kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received get operation for key %s", kv.me, args.Key))
-	if (kv.config.Shards[key2shard(args.Key)] == kv.gid) {
-		op := Op {
-			Operation:	"Get",
-			ClerkId:	args.ClerkId,
-			Seq:		args.Seq,
-			Key:		args.Key,
-		}
-		kv.mu.Unlock()
-		res := kv.checkIfLeaderAndSendOp(op)
-		reply.Err = res.Err
-		reply.Value = res.Value
-	} else {
-		kv.mu.Unlock()
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received wrong group for get operation for key %s", kv.me, args.Key))
-		reply.Err = ErrWrongGroup
-	}
+	res := kv.checkAndSendOp(op, args.ConfigNum)
+	reply.Err = res.Err
+	reply.Value = res.Value
 }
+
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.mu.Lock()
-	if (len(kv.waitingToBeReceived) != 0) {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received get operation for key %s but MIP", kv.me, args.Key))
-		reply.Err = ErrWrongGroup
-		kv.mu.Unlock()
-		return
+	op := Op {
+		Operation:	args.Op,
+		ClerkId:	args.ClerkId,
+		Seq:		args.Seq,
+		Key:		args.Key,
+		Value:		args.Value,
 	}
-
-	if (kv.config.Shards[key2shard(args.Key)] == kv.gid) {
-		op := Op {
-			Operation:	args.Op,
-			ClerkId:	args.ClerkId,
-			Seq:		args.Seq,
-			Key:		args.Key,
-			Value:		args.Value,
-		}
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received %s operation for key %s", kv.me, op.Operation, args.Key))
-		kv.mu.Unlock()
-		res := kv.checkIfLeaderAndSendOp(op)
-		reply.Err = res.Err
-	} else {
-		kv.mu.Unlock()
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received wrong group for put/append operation for key %s", kv.me, args.Key))
-		reply.Err = ErrWrongGroup
-	}
+	res := kv.checkAndSendOp(op, args.ConfigNum)
+	reply.Err = res.Err
 }
 
-func (kv *ShardKV) checkIfLeaderAndSendOp(op Op) CommonReply {
+func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 	reply := CommonReply{}
 
 	kv.mu.Lock()
+	if (kv.config.Shards[key2shard(args.Key)] != kv.gid) {
+		kv.mu.Unlock()
+		kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d received wrong group for %s request for seq %d", kv.me, args.Op, op.Seq))
+		reply.Err = ErrWrongGroup
+		return reply
+	}
+
+	if clerkConfigNum > kv.config.Num {
+		kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d config is outdated %d compared to %d for seq %d", kv.me, kv.config.Num, clerkConfigNum, op.Seq))
+		reply.Err = ErrConfigOutdated
+		kv.mu.Unlock()
+		return
+	}
+
 	// first check if this server is the leader
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d is not the leader for %s request on servers", kv.me, op.Operation))
+		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d is not the leader for %s request for seq %d", kv.me, op.Operation, op.Seq))
 		reply.Err = ErrWrongLeader
 		kv.mu.Unlock()
 		return reply
 	}
+
+	// If leader, then check if a migration is in progress
+	// if (kv.MIP) {
+	// 	kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d received %s request for seq %d but MIP with current config num: %d", kv.me, op.Operation, op.Seq, kv.config.Num))
+	// 	reply.Err = ErrWrongGroup
+	// 	kv.mu.Unlock()
+	// 	return
+	// }
 
 	// Check if the operation is a duplicate
 	if op.Operation != "Get" {
@@ -131,6 +125,8 @@ func (kv *ShardKV) checkIfLeaderAndSendOp(op Op) CommonReply {
 		}
 	}
 
+	kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d submits %s operation for seq %d", kv.me, op.Operation, op.Seq))
+
 	ch := make(chan Op, 1)
 	kv.notifyChans[op.ClerkId] = ch
 	kv.rf.Start(op)
@@ -142,12 +138,12 @@ func (kv *ShardKV) checkIfLeaderAndSendOp(op Op) CommonReply {
 
 	select{
 	case <-timer.C: // timer expires
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d timed out waiting for %s request", kv.me, op.Operation))
+		kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d timed out waiting for request seq %d", kv.me, op.Seq))
 		reply.Err = ErrTimeOut
 	case resultOp := <-ch: // wait for the operation to be applied
 		// check if the operation corresponds to the request
 		if resultOp.ClerkId != op.ClerkId || resultOp.Seq != op.Seq {
-			kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received a non-matching %s result", kv.me, op.Operation))
+			kv.logger.Log(LogTopicOperation, fmt.Sprintf("S%d received a non-matching %s result", kv.me, op.Operation))
 			reply.Err = ErrWrongLeader
 		} else {
 			if (resultOp.Operation == "Get") {
@@ -168,7 +164,6 @@ func (kv *ShardKV) checkIfLeaderAndSendOp(op Op) CommonReply {
 func (kv *ShardKV) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
-	// Your code here, if desired.
 }
 
 func (kv *ShardKV) killed() bool {
@@ -176,19 +171,6 @@ func (kv *ShardKV) killed() bool {
 	return z == 1
 }
 
-func (kv *ShardKV) startConfigChange(newConfig shardctrler.Config) {
-	if _, isLeader := kv.rf.GetState(); !isLeader {
-		return
-	}
-	kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d is the leader for migration from to %v", kv.me, newConfig.Num))
-
-	op := Op{
-		Operation: "ConfigChange",
-		NewConfig: newConfig,
-	}
-
-	kv.rf.Start(op)
-}
 
 /*
 Detect config change:
@@ -209,18 +191,35 @@ OPTIONS:
 3. Accept some operations after reject/queue other
 */
 func (kv *ShardKV) ConfigChecker() {
+	lastNoticed := 0
 	for !kv.killed() {
 		kv.mu.Lock()
 
 		newConfig := kv.sm.Query(-1)
-
-		if newConfig.Num > kv.config.Num && len(kv.waitingToBeReceived) == 0 {
+		_, isLeader := kv.rf.GetState()
+		if isLeader && newConfig.Num > kv.config.Num && !kv.MIP && newConfig.Num > lastNoticed {
 			kv.startConfigChange(newConfig)
+			lastNoticed = newConfig.Num
 		}
 
 		kv.mu.Unlock()
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+
+func (kv *ShardKV) startConfigChange(newConfig shardctrler.Config) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		return
+	}
+	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d noticed config change from %d to %d", kv.me, kv.config.Num, newConfig.Num))
+
+	op := Op{
+		Operation: "ConfigChange",
+		NewConfig: newConfig,
+	}
+
+	kv.rf.Start(op)
 }
 
 // servers[] contains the ports of the servers in this group.
@@ -277,124 +276,11 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	kv.clerkLastSeq = make(map[int64]int64)
 	kv.notifyChans = make(map[int64]chan Op)
-
-	kv.waitingToBeReceived = make(map[int]bool)
+	kv.commandQueue = []Op{}
+	kv.cache = make(map[int64]string)
 
 	go kv.Applier()
 	go kv.ConfigChecker()
 
 	return kv
-}
-
-func (kv *ShardKV) Applier() {
-	// continuously process messages from the applyCh channel
-	for !kv.killed() {
-		msg := <-kv.applyCh // wait for a message from Raft
-		if msg.CommandValid {
-			kv.mu.Lock()
-			if msg.CommandIndex <= kv.lastApplied {
-				kv.mu.Unlock()
-				continue
-			}
-
-			op := msg.Command.(Op)
-
-			//Check if message is migration
-			if op.Operation == "ConfigChange" {
-				if kv.config.Num >= op.NewConfig.Num {
-					kv.mu.Unlock()
-					continue
-				}
-
-				oldConfig := kv.config
-				kv.config = op.NewConfig
-
-				// Check if the current group is now responsible for the shard
-				for shard, oldGID := range oldConfig.Shards {
-					if kv.config.Shards[shard] == kv.gid && oldGID != kv.gid && oldGID != 0 {
-						kv.waitingToBeReceived[oldGID] = true
-					}
-				}
-
-				shardsToTransfer := make(map[int]map[string]string)
-				for key, value := range kv.db {
-					newGid := kv.config.Shards[key2shard(key)]
-					if newGid != kv.gid && newGid != 0 {
-						if shardsToTransfer[newGid] == nil{
-							shardsToTransfer[newGid] = make(map[string]string)	
-						}
-						shardsToTransfer[newGid][key] = value
-					}
-				}
-
-				for gid, db := range shardsToTransfer {
-					go kv.SendShard(gid, db, kv.config)
-				}
-			} else if op.Operation == "InstallMigration" {
-				oldConfig := kv.config
-				kv.config = op.NewConfig
-
-				if oldConfig.Num < kv.config.Num {
-					for shard, oldGID := range oldConfig.Shards {
-						if kv.config.Shards[shard] == kv.gid && oldGID != kv.gid && oldGID != 0 {
-							kv.waitingToBeReceived[oldGID] = true
-						}
-					}
-	
-					shardsToTransfer := make(map[int]map[string]string)
-					for key, value := range kv.db {
-						newGid := kv.config.Shards[key2shard(key)]
-						if newGid != kv.gid && newGid != 0 {
-							if shardsToTransfer[newGid] == nil{
-								shardsToTransfer[newGid] = make(map[string]string)	
-							}
-							shardsToTransfer[newGid][key] = value
-						}
-					}
-	
-					for gid, db := range shardsToTransfer {
-						go kv.SendShard(gid, db, kv.config)
-					}
-				}
-
-				for key,value := range op.DB {
-					kv.db[key] = value
-				}
-				delete(kv.waitingToBeReceived, op.GID)
-			} else if (op.Operation == "CompleteMigration") {
-			
-			} else if (kv.config.Shards[key2shard(op.Key)] == kv.gid) {
-				// check if the operation is the latest from the clerk
-				lastSeq, found := kv.clerkLastSeq[op.ClerkId]
-				if !found || lastSeq < op.Seq {
-					// apply the operation to the state machine
-					kv.applyOperation(op)
-					kv.clerkLastSeq[op.ClerkId] = op.Seq
-				}
-
-				// notify the waiting goroutine if it's present
-				if ch, ok := kv.notifyChans[op.ClerkId]; ok {
-					select {
-					case ch <- op: // notify the waiting goroutine
-						kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d", kv.me, op.ClerkId))
-					default:
-						// if the channel is already full, skip to prevent blocking.
-					}
-				}
-			}
-			kv.lastApplied = msg.CommandIndex
-			kv.mu.Unlock()
-		}
-	}
-}
-
-func (kv *ShardKV) applyOperation(op Op) {
-	switch op.Operation {
-	case "Put":
-		kv.db[op.Key] = op.Value
-	case "Append":
-		kv.db[op.Key] += op.Value
-	case "Get":
-		// No state change for Get
-	}
 }

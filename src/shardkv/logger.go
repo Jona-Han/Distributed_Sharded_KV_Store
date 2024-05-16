@@ -9,6 +9,9 @@ type LogTopic int
 const (
 	LogTopicClerk LogTopic = iota
 	LogTopicServer
+	LogTopicOperation
+	LogTopicConfigChange
+	LogTopicMIP
 )
 const TermColor string = "\x1b[0m"
 
