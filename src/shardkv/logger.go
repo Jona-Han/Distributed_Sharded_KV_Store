@@ -9,7 +9,7 @@ type LogTopic int
 const (
 	LogTopicClerk LogTopic = iota
 	LogTopicServer
-	LogTopicOperation
+	LogTopicOp
 	LogTopicConfigChange
 	LogTopicMIP
 )

@@ -14,6 +14,7 @@ import "math/big"
 import "cpsc416/shardctrler"
 import "time"
 import "fmt"
+import "sync/atomic"
 
 // which shard is a key in?
 func key2shard(key string) int {
@@ -71,17 +72,13 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
 // You will have to modify this function.
-func (ck *Clerk) Get(key string) string {\
+func (ck *Clerk) Get(key string) string {
 	args := GetArgs{
 		Key:		key,
 		ClerkId: 	ck.clerkId,
-		Seq :	 	atomic.AddInt64(&ck.seq, 1),
+		Seq:	 	atomic.AddInt64(&ck.seq, 1),
 		ConfigNum:	ck.config.Num,
 	}
-	args.
-	args.ClerkId = ck.clerkId
-	args.Seq = atomic.AddInt64(&ck.seq, 1)
-	args.ConfigNum 
 
 	for {
 		shard := key2shard(key)
@@ -93,7 +90,7 @@ func (ck *Clerk) Get(key string) string {\
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+				if ok && (reply.Err == OK) {
 					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d Get operation success for seq %d", ck.clerkId, ck.seq))
 					return reply.Value
 				}

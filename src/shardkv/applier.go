@@ -1,6 +1,5 @@
 package shardkv
 
-import "time"
 import "fmt"
 
 func (kv *ShardKV) Applier() {
@@ -15,149 +14,103 @@ func (kv *ShardKV) Applier() {
 			}
 
 			op := msg.Command.(Op)
-
-			if _, isLeader := kv.rf.GetState(); isLeader && op.Operation == "ConfigChange" {
-				kv.handleLeaderConfigChange(op)
-			} else if op.Operation == "ConfigChange" {
-				fmt.Println("follower")
-				go kv.handleFollowerConfigChange(op)
-			} else if op.Operation == "CompleteConfigChange" {
-				kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d completed config change from %d to %d ", kv.me, kv.config.Num, op.NewConfig.Num))
-				kv.handleCompleteConfigChange(op)
-			} else if kv.MIP {
-				// Ad op to command queue
-				kv.logger.Log(LogTopicMIP, fmt.Sprintf("S%d queued %s op with key %s ", kv.me, op.Operation, op.Key))
-				kv.commandQueue = append(kv.commandQueue, op)
-			} else if (kv.config.Shards[key2shard(op.Key)] == kv.gid) {
-				kv.logger.log(LogTopicOperation, fmt.Sprintf("S%d applying "))
-				kv.handleKvOperation(op)
-			}
 			kv.lastApplied = msg.CommandIndex
+
+			if op.Op == "StartConfigChange" {
+				kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d started config change from %d to %d ", kv.me, kv.config.Num, op.NewConfig.Num))
+				go kv.handleConfigChange(op)
+			} else if op.Op == "CompleteConfigChange" {
+				kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d completed config change from %d to %d ", kv.me, op.PrevConfig.Num, op.NewConfig.Num))
+				kv.handleCompleteConfigChange(op)
+			} else {
+				kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d applying %s op with seq %d", kv.me, op.Op, op.Seq))
+				kv.handleClientOperation(op)
+			}
 			kv.mu.Unlock()
 		}
 	}
 }
 
-func (kv *ShardKV) handleKvOperation(op Op) {
+func (kv *ShardKV) handleClientOperation(op Op) {
 	// check if the operation is the latest from the clerk
-	lastSeq, found := kv.clerkLastSeq[op.ClerkId]
-	if !found || lastSeq < op.Seq {
+	if !kv.acceptingKeyInShard(op.Key) {
+		return 
+	}
+
+	response := CacheResponse{
+		Seq:		op.Seq,
+		Op: 		op.Op,
+	}
+
+	shouldSendResponse := false
+
+	lastReply, found := kv.cachedResponses[op.ClerkId]
+	if !found || lastReply.Seq < op.Seq {
 		// apply the operation to the state machine
 		kv.applyOperation(op)
-		kv.clerkLastSeq[op.ClerkId] = op.Seq
+		if op.Op == "Get" {
+			val, ok := kv.db[op.Key]
+			if !ok {
+				val = ""
+			}
+			response.Value = val
+		}
+		kv.cachedResponses[op.ClerkId] = response
+		shouldSendResponse = true
+	} else if op.Seq == lastReply.Seq {
+		response = lastReply
+		shouldSendResponse = true
 	}
 
 	// notify the waiting goroutine if it's present
-	if ch, ok := kv.notifyChans[op.ClerkId]; ok {
+	if ch, ok := kv.notifyChans[op.ClerkId]; ok && shouldSendResponse {
 		select {
-		case ch <- op: // notify the waiting goroutine
-			kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
-		default:
-			// if the channel is already full, skip to prevent blocking.
+			case ch <-response:
+				kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
+			default:
+				// if the channel is already full, skip to prevent blocking.
 		}
 	}
 }
 
 func (kv *ShardKV) applyOperation(op Op) {
-	switch op.Operation {
-	case "Put":
-		kv.db[op.Key] = op.Value
-	case "Append":
-		kv.db[op.Key] += op.Value
-	case "Get":
-		// No state change for Get
+	switch op.Op {
+		case "Put":
+			kv.db[op.Key] = op.Value
+		case "Append":
+			kv.db[op.Key] += op.Value
+		case "Get":
+			// No state change for Get
 	}
 }
 
-func (kv *ShardKV) handleLeaderConfigChange(op Op) {
-	oldConfig := kv.config
-	kv.config = op.NewConfig
+func (kv *ShardKV) handleConfigChange(op Op) {
+	if kv.MIP || op.NewConfig.Num <= kv.config.Num {
+		return
+	}
+
 	kv.MIP = true
-
-	migrationRequests := make(map[int]map[int]bool)
-	// Set which shards I need to request data from before proceeding
-	for shard, oldGID := range oldConfig.Shards {
-		if kv.config.Shards[shard] == kv.gid && oldGID != kv.gid && oldGID != 0 {
-			if _, exists := migrationRequests[oldGID]; !exists {
-				migrationRequests[oldGID] = make(map[int]bool)
-			}
-			migrationRequests[oldGID][shard] = true
-		}
-	}
-
-	// Send RequestShard RPCs
-	responses := []RequestShardReply{}
-	responseChan := make(chan RequestShardReply)
-	for gid, shardsToRequest := range migrationRequests {
-		go kv.GetShard(gid, shardsToRequest, kv.config, responseChan)
-	}
-
-	// Collect responses to aggregate and signal completion of migration
-	for i := 0; i < len(migrationRequests); i++ {
-		select {
-		case result := <-responseChan:
-			responses = append(responses, result)
-		case <-time.After(3 * time.Second):  // Adjust the timeout duration as needed
-			fmt.Println("Timeout occurred while waiting for a response")
-			return
-		}
-    }
-
-	completionOp := Op{
-		NewConfig: op.NewConfig,
-		Operation: "CompleteConfigChange",
-		DB:  make(map[string]string),
-	}
-
-	for _, response := range responses {
-		for key,value := range response.Data {
-			completionOp.DB[key] = value
-		}
-	}
-
-	kv.rf.Start(completionOp)
-}
-
-func (kv *ShardKV) handleFollowerConfigChange(op Op) {
-	kv.MIP = true
-	for {
-        _, isLeader := kv.rf.GetState() // Check leadership status outside the blocking loop
-        if !isLeader { // Only enter if not leader
-            kv.mu.Lock()
-            if kv.config.Num >= op.NewConfig.Num {
-                kv.mu.Unlock() // Unlock before return
-				fmt.Println("follower return")
-                return
-            }
-            kv.mu.Unlock()
-            time.Sleep(50 * time.Millisecond) // Sleep to prevent tight loop on leadership check
-        } else {
-			break
-		}
-	}
-	fmt.Println("leader failed")
-	// If didn't return through the loop due to a higher config number seen
-	// then the previous leader must have failed to complete migration
-	kv.handleFollowerConfigChange(op)
+	copyConfig(&kv.prevConfig, &kv.config)
+	copyConfig(&kv.config, &op.NewConfig)
 }
 
 func (kv *ShardKV) handleCompleteConfigChange(op Op) {
-	kv.mu.Lock()
-	fmt.Println("Complete config change")
-	kv.MIP = false
-	// Set the db
-	for key,value := range op.DB {
-		kv.db[key] = value
+	if !kv.MIP || op.NewConfig.Num != kv.config.Num {
+		return
 	}
-	// Update the config to new config
-	kv.config = op.NewConfig
-	// Force queued commands to be executed sequentially
-	for _, op := range kv.commandQueue  {
-		if (kv.config.Shards[key2shard(op.Key)] == kv.gid) {
-			kv.handleKvOperation(op)
+	kv.MIP = false
+	copyConfig(&kv.prevConfig, &kv.config)
+
+	// Update shard data into k/v
+	for k, v := range op.ShardData {
+		kv.db[k] = v
+	}
+
+	// Update cached responses
+	for clerkId, newResponse := range op.NewCache {
+		oldResponse, ok := kv.cachedResponses[clerkId]
+		if !ok || newResponse.Seq > oldResponse.Seq {
+			kv.cachedResponses[clerkId] = oldResponse
 		}
 	}
-	kv.commandQueue = kv.commandQueue[:0]
-	kv.mu.Unlock()
 }
-

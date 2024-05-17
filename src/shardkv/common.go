@@ -9,21 +9,18 @@ package shardkv
 // You will have to modify these definitions.
 //
 import "time"
-import "cpsc416/shardctrler"
 
 const (
 	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeOut 	   = "ErrTimeOut"
 	ErrOutdated    = "ErrOutdated"
-	ErrConfigOutdated = "ErrConfigOutdated"
 )
 
 const WaitTimeOut = 2000 * time.Millisecond
 
-const Debug = true
+const Debug = false
 
 type Err string
 
@@ -58,14 +55,4 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
-}
-
-type RequestShardArgs struct {
-	Config 			shardctrler.Config
-	ShardsRequested map[int]bool
-}
-
-type RequestShardReply struct {
-	Data 	map[string]string
-	Err	Err
 }
