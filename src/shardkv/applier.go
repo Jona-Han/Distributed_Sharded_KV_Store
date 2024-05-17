@@ -1,13 +1,14 @@
 package shardkv
 
 import "fmt"
+import "time"
 
 func (kv *ShardKV) Applier() {
 	// continuously process messages from the applyCh channel
 	for !kv.killed() {
 		msg := <-kv.applyCh // wait for a message from Raft
+		kv.mu.Lock()
 		if msg.CommandValid {
-			kv.mu.Lock()
 			if msg.CommandIndex <= kv.lastApplied {
 				kv.mu.Unlock()
 				continue
@@ -17,23 +18,23 @@ func (kv *ShardKV) Applier() {
 			kv.lastApplied = msg.CommandIndex
 
 			if op.Op == "StartConfigChange" {
-				kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d started config change from %d to %d ", kv.me, kv.config.Num, op.NewConfig.Num))
-				go kv.handleConfigChange(op)
+				kv.handleConfigChange(op)
 			} else if op.Op == "CompleteConfigChange" {
-				kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("S%d completed config change from %d to %d ", kv.me, op.PrevConfig.Num, op.NewConfig.Num))
 				kv.handleCompleteConfigChange(op)
 			} else {
-				kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d applying %s op with seq %d", kv.me, op.Op, op.Seq))
 				kv.handleClientOperation(op)
 			}
-			kv.mu.Unlock()
 		}
+		kv.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 func (kv *ShardKV) handleClientOperation(op Op) {
 	// check if the operation is the latest from the clerk
+
 	if !kv.acceptingKeyInShard(op.Key) {
+		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d rejecting op from raft ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
 		return 
 	}
 
@@ -58,6 +59,7 @@ func (kv *ShardKV) handleClientOperation(op Op) {
 		kv.cachedResponses[op.ClerkId] = response
 		shouldSendResponse = true
 	} else if op.Seq == lastReply.Seq {
+		kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d sees already applied %s op with seq %d", kv.me, op.Op, op.Seq))
 		response = lastReply
 		shouldSendResponse = true
 	}
@@ -77,9 +79,12 @@ func (kv *ShardKV) applyOperation(op Op) {
 	switch op.Op {
 		case "Put":
 			kv.db[op.Key] = op.Value
+			kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, op.Value))
 		case "Append":
 			kv.db[op.Key] += op.Value
+			kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, kv.db[op.Key]))
 		case "Get":
+			kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, kv.db[op.Key]))
 			// No state change for Get
 	}
 }
@@ -88,8 +93,11 @@ func (kv *ShardKV) handleConfigChange(op Op) {
 	if kv.MIP || op.NewConfig.Num <= kv.config.Num {
 		return
 	}
-
+	
 	kv.MIP = true
+
+	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d started config change from %d to %d", kv.gid, kv.me, kv.config.Num, op.NewConfig.Num))
+
 	copyConfig(&kv.prevConfig, &kv.config)
 	copyConfig(&kv.config, &op.NewConfig)
 }
@@ -99,6 +107,9 @@ func (kv *ShardKV) handleCompleteConfigChange(op Op) {
 		return
 	}
 	kv.MIP = false
+	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
+
+
 	copyConfig(&kv.prevConfig, &kv.config)
 
 	// Update shard data into k/v

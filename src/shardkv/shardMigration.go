@@ -2,6 +2,7 @@ package shardkv
 
 import "cpsc416/shardctrler"
 import "time"
+import "fmt"
 
 func (kv *ShardKV) ConfigChecker() {
 	for !kv.killed() {
@@ -45,9 +46,9 @@ func (kv *ShardKV) ConfigMigrator() {
 					requiredShards = append(requiredShards, shard)
 				}
 			}
-			kv.mu.Unlock()
+			// kv.mu.Unlock()
 			newData, newCachedResponses := kv.requestNewShards(requiredShards, prevConfig)
-			kv.mu.Lock()
+			// kv.mu.Lock()
 
 			opToSend := Op{
 				Op:			 "CompleteConfigChange",
@@ -95,35 +96,45 @@ func (kv *ShardKV) requestNewShards(RequiredShards []int,
 			ShardsRequested:    shards,
 			ConfigNum: prevConfig.Num,
 		}
-		reply := RequestShardReply{}
 
-		if servers, ok := kv.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := kv.make_end(servers[si])
-				ok := srv.Call("ShardKV.RequestShard", &args, &reply)
-				if ok && (reply.Err == OK) {
+		for {
+			if servers, ok := kv.prevConfig.Groups[gid]; ok {
+				kv.logger.Log(LogTopicMIP, fmt.Sprintf("%d - S%d requesting shards from %v", kv.gid, kv.me, servers))
+				shardReceived := false
+				// try each server for the shard.
+				for si := 0; si < len(servers); si++ {
+					srv := kv.make_end(servers[si])
+					var reply RequestShardReply
+	
+					ok = srv.Call("ShardKV.RequestShard", &args, &reply)
+					if ok && (reply.Err == OK) {
+						for k, v := range reply.ShardData {
+							newDb[k] = v
+						}
+	
+						for clerkId, reply := range reply.PrevCache {
+							oldResp, ok := newCache[clerkId]
+							if !ok || reply.Seq > oldResp.Seq {
+								newCache[clerkId] = reply
+							}
+						}
+						shardReceived = true
+						break
+					}
+				}
+				if shardReceived {
 					break
 				}
 			}
 		}
-
-		for k, v := range reply.ShardData {
-			newDb[k] = v
-		}
-		for clerkId, reply := range reply.PrevCache {
-			oldResp, ok := newCache[clerkId]
-			if !ok || reply.Seq > oldResp.Seq {
-				newCache[clerkId] = reply
-			}
-		}
 	}
-
 	return newDb, newCache
 }
 
 func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply) {
+	kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard received", kv.gid, kv.me))
 	if _, isLeader := kv.rf.GetState(); !isLeader {
+		kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard but not the leader", kv.gid, kv.me))
 		reply.Err = ErrWrongLeader
 		return
 	}
@@ -131,6 +142,7 @@ func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	if kv.config.Num < args.ConfigNum {
+		kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard outdated %d < %d", kv.gid, kv.me, kv.config.Num, args.ConfigNum))
 		reply.Err = ErrOutdated
 		return
 	}
@@ -146,6 +158,7 @@ func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply
 	for k, v := range kv.cachedResponses {
 		reply.PrevCache[k] = v
 	}
+	kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d sending shards %v", kv.gid, kv.me, reply.ShardData))
 
 	reply.Err = OK
 }

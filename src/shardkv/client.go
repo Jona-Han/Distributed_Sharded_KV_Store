@@ -130,7 +130,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				// ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d sent %s operation for key %s to server %v", ck.clerkId, args.Op, key, si))
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
-					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d %s operation success for seq %d", ck.clerkId, args.Op, ck.seq))
+					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d - %s operation success for seq %d", ck.clerkId, args.Op, ck.seq))
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {

@@ -66,7 +66,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	lastResponse, found := kv.cachedResponses[args.ClerkId]
 	if found && lastResponse.Seq == args.Seq {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received a duplicate Get request from ClerkID %d, Seq %d", kv.me, args.ClerkId, args.Seq))
+		kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Get request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
 		reply.Err = OK
 		reply.Value = lastResponse.Value
 		kv.mu.Unlock()
@@ -91,7 +91,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	lastResponse, found := kv.cachedResponses[args.ClerkId]
 	if found && lastResponse.Seq == args.Seq {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d received a duplicate Put/Append request from ClerkID %d, Seq %d", kv.me, args.ClerkId, args.Seq))
+		kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Put/Append request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
 		reply.Err = OK
 		kv.mu.Unlock()
 		return
@@ -124,44 +124,45 @@ func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 
 	kv.mu.Lock()
 	if !kv.acceptingKeyInShard(op.Key) {
-		kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d not accepting %s request for seq %d", kv.me, op.Op, op.Seq))
+		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d not accepting %s request for seq %d", kv.gid, kv.me, op.Op, op.Seq))
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return reply
 	}
 
 	if clerkConfigNum > kv.config.Num {
-		kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d config is outdated %d compared to %d for seq %d", kv.me, kv.config.Num, clerkConfigNum, op.Seq))
+		// kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d config is outdated %d compared to %d for seq %d", kv.gid, kv.me, kv.config.Num, clerkConfigNum, op.Seq))
 		reply.Err = ErrOutdated
 		kv.mu.Unlock()
 		return reply
 	}
 
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d is not the leader for %s request for seq %d", kv.me, op.Op, op.Seq))
+		// kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d is not the leader for %s request for seq %d", kv.gid, kv.me, op.Op, op.Seq))
 		reply.Err = ErrWrongLeader
 		kv.mu.Unlock()
 		return reply
 	}
 
-	kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d submits %s Op for seq %d", kv.me, op.Op, op.Seq))
+	kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d submits %s Op for seq %d, key=%d", kv.gid, kv.me, op.Op, op.Seq, key2shard(op.Key)))
 
 	ch := make(chan CacheResponse, 1)
 	kv.notifyChans[op.ClerkId] = ch
 	kv.rf.Start(op)
-	
+	kv.mu.Unlock()
+
 	// set up a timer to avoid waiting indefinitely.
 	timer := time.NewTimer(WaitTimeOut)
 	defer timer.Stop()
 
 	select{
 	case <-timer.C: // timer expires
-		kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d timed out waiting for request seq %d", kv.me, op.Seq))
+		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d timed out waiting for request seq %d", kv.gid, kv.me, op.Seq))
 		reply.Err = ErrTimeOut
 	case resultFromApply := <-ch: // wait for the Op to be applied
 		// check if the Op corresponds to the request
 		if resultFromApply.Seq != op.Seq {
-			kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d received a non-matching %s result", kv.me, op.Op))
+			kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d received a non-matching %s result", kv.gid, kv.me, op.Op))
 			reply.Err = ErrWrongLeader
 		} else {
 			if (resultFromApply.Op == "Get") {
@@ -258,8 +259,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.config.Shards[i] = 0
 		kv.prevConfig.Shards[i] = 0
 	}
-
-	kv.MIP = false
 
 	go kv.Applier()
 	go kv.ConfigChecker()
