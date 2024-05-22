@@ -20,7 +20,7 @@ const (
 
 const WaitTimeOut = 2000 * time.Millisecond
 
-const Debug = false
+const Debug = true
 
 type Err string
 
@@ -31,7 +31,6 @@ type CommonReply struct {
 
 // Put or Append
 type PutAppendArgs struct {
-	// You'll have to add definitions here.
 	Key   string
 	Value string
 	Op    string // "Put" or "Append"

@@ -1,7 +1,6 @@
 package shardkv
 
 import "fmt"
-import "time"
 
 func (kv *ShardKV) Applier() {
 	// continuously process messages from the applyCh channel
@@ -24,9 +23,11 @@ func (kv *ShardKV) Applier() {
 			} else {
 				kv.handleClientOperation(op)
 			}
+		} else if msg.SnapshotValid {
+			kv.readSnapshot(msg.Snapshot)
+			kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d processed a snapshot message", kv.gid, kv.me))
 		}
 		kv.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 

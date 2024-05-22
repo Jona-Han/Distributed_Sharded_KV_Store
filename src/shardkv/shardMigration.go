@@ -141,7 +141,7 @@ func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply
 	
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	if kv.config.Num < args.ConfigNum {
+	if args.ConfigNum >= kv.config.Num {
 		kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard outdated %d < %d", kv.gid, kv.me, kv.config.Num, args.ConfigNum))
 		reply.Err = ErrOutdated
 		return

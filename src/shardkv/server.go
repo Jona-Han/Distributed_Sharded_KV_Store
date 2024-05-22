@@ -44,9 +44,9 @@ type ShardKV struct {
 	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
 	dead 		 int32
+	persister	 *raft.Persister
 
 	logger *Logger
-
 
 	sm			*shardctrler.Clerk
 	config   	shardctrler.Config
@@ -218,6 +218,11 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(map[string]string{})
+	labgob.Register(map[int64]CacheResponse{})
+	labgob.Register(map[int]bool{})
+	
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -225,6 +230,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.ctrlers = ctrlers
+	kv.persister = persister
 
 	
 	logger, err := NewLogger(1)
@@ -263,6 +269,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.Applier()
 	go kv.ConfigChecker()
 	go kv.ConfigMigrator()
+	go kv.snapshotChecker()
 
 	return kv
 }
