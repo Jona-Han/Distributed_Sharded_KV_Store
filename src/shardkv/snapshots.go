@@ -7,16 +7,16 @@ import "cpsc416/labgob"
 import "bytes"
 import "time"
 
-func (kv *ShardKV) SnapshotChecker() {
+func (kv *ShardKV) snapshotChecker() {
 	if kv.maxraftstate == -1  {
 		return
 	}
 	for !kv.killed() {
-		kv.shardLock.RLock()
+		kv.sl.RLock()
 		if kv.persister.RaftStateSize() >= kv.maxraftstate*2/3 {
 			kv.createSnapshot()
 		} else {
-			kv.shardLock.RUnlock()
+			kv.sl.RUnlock()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -26,7 +26,7 @@ func (kv *ShardKV) createSnapshot() {
 	kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d starts taking a snapshot", kv.me))
 
 	dbCpy := make(map[string]string)
-	cachedResponsesCpy := make(map[int64]CacheResponse)
+	cachedResponsesCpy := make(map[int64]CacheResponse, len(kv.cachedResponses))
 	configCpy := shardctrler.Config{}
 	prevConfigCpy := shardctrler.Config{}
 	copyConfig(&configCpy, &kv.config)
@@ -42,7 +42,7 @@ func (kv *ShardKV) createSnapshot() {
 	MIP := kv.MIP
 	index := kv.lastApplied
 
-	kv.shardLock.RUnlock()
+	kv.sl.RUnlock()
 
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)

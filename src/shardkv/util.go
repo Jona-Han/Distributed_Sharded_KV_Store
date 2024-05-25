@@ -1,20 +1,21 @@
 package shardkv
 import (
 	"cpsc416/shardctrler"
-	"strconv"
+	"fmt"
 )
 
 func copyConfig(to *shardctrler.Config, from *shardctrler.Config) {
 	to.Num = from.Num
-	to.Groups = make(map[int][]string)
-	for i, sh := range from.Shards {
-		to.Shards[i] = sh
-	}
+	to.Shards = from.Shards
+
+	to.Groups = make(map[int][]string, len(from.Groups))
 	for k, v := range from.Groups {
-		to.Groups[k] = v
+		newSlice := make([]string, len(v))
+		copy(newSlice, v)
+		to.Groups[k] = newSlice
 	}
 }
 
 func termPlusIndexToStr(term int, index int) string {
-	return strconv.Itoa(term) + "." + strconv.Itoa(index)
+	return fmt.Sprintf("%d+%d", term, index)
 }

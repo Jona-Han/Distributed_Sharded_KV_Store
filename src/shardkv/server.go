@@ -8,7 +8,6 @@ import "cpsc416/labgob"
 import "cpsc416/shardctrler"
 import "fmt"
 import "sync/atomic"
-import "strconv"
 
 
 type Op struct {
@@ -31,7 +30,6 @@ type CacheResponse struct {
 	Seq 		int64
 	Value		string
 	Op			string
-	Term 		int
 	OK			bool
 }
 
@@ -60,23 +58,12 @@ type ShardKV struct {
 
 	db             		map[string]string
 	MIP 				bool 				// Migration in progress
-	shardLock       sync.RWMutex
+	sl       sync.RWMutex
 }
 
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Check if the Op is a duplicate
-	// kv.mu.Lock()
-	// lastResponse, found := kv.cachedResponses[args.ClerkId]
-	// if found && lastResponse.Seq == args.Seq {
-	// 	kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Get request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
-	// 	reply.Err = OK
-	// 	reply.Value = lastResponse.Value
-	// 	kv.mu.Unlock()
-	// 	return
-	// }
-	// kv.mu.Unlock()
-
 	op := Op {
 		Op:	"Get",
 		ClerkId:	args.ClerkId,
@@ -91,16 +78,6 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Check if the Op is a duplicate
-	// kv.mu.Lock()
-	// lastResponse, found := kv.cachedResponses[args.ClerkId]
-	// if found && lastResponse.Seq == args.Seq {
-	// 	kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Put/Append request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
-	// 	reply.Err = OK
-	// 	kv.mu.Unlock()
-	// 	return
-	// }
-	// kv.mu.Unlock()
-
 	op := Op {
 		Op:	args.Op,
 		ClerkId:	args.ClerkId,
@@ -125,26 +102,35 @@ func (kv *ShardKV) acceptingKeyInShard(key string) bool {
 func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 	reply := CommonReply{}
 
-	kv.shardLock.RLock()
+	kv.sl.RLock()
+	lastResponse, found := kv.cachedResponses[op.ClerkId]
+	if found && lastResponse.Seq == op.Seq {
+		kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate %s request from ClerkID %d, Seq %d", kv.gid, kv.me, op.Op, op.ClerkId, op.Seq))
+		reply.Err = OK
+		reply.Value = lastResponse.Value
+		kv.sl.RUnlock()
+		return reply
+	}
+
 	if !kv.acceptingKeyInShard(op.Key) {
 		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d not accepting %s request for seq %d", kv.gid, kv.me, op.Op, op.Seq))
 		reply.Err = ErrWrongGroup
-		kv.shardLock.RUnlock()
+		kv.sl.RUnlock()
 		return reply
 	}
 
 	if clerkConfigNum > kv.config.Num {
 		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d config is outdated %d compared to %d for seq %d", kv.gid, kv.me, kv.config.Num, clerkConfigNum, op.Seq))
 		reply.Err = ErrOutdated
-		kv.shardLock.RUnlock()
+		kv.sl.RUnlock()
 		return reply
 	}
-	kv.shardLock.RUnlock()
+	kv.sl.RUnlock()
 
 	kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d submits %s Op for seq %d, key=%d", kv.gid, kv.me, op.Op, op.Seq, key2shard(op.Key)))
 
 	kv.mu.Lock()
-	_, term, leader := kv.rf.Start(op)
+	idx, term, leader := kv.rf.Start(op)
 
 	if !leader {
 		kv.mu.Unlock()
@@ -154,14 +140,14 @@ func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 
 
 	ch := make(chan CacheResponse, 1)
-	kv.notifyChans[strconv.FormatInt(op.ClerkId, 10)] = ch
+	kv.notifyChans[termPlusIndexToStr(term, idx)] = ch
 	kv.mu.Unlock()
 	resp := <-ch
 
 	kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d received %s Op for seq %d, key=%d", kv.gid, kv.me, op.Op, op.Seq, key2shard(op.Key)))
 	if !resp.OK {
 		reply.Err = ErrWrongGroup
-	} else if resp.Term != term {
+	} else if resp.Seq != op.Seq {
 		reply.Err = ErrWrongLeader
 	} else {
 		reply.Value = resp.Value
@@ -219,6 +205,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(map[int64]CacheResponse{})
 	labgob.Register(map[int]bool{})
 	labgob.Register(CacheResponse{})
+	labgob.Register([]int{})
 	labgob.Register(map[int][]string{})
 	
 
@@ -243,7 +230,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.db = make(map[string]string)
-
 	kv.cachedResponses = make(map[int64]CacheResponse)
 	kv.notifyChans = make(map[string]chan CacheResponse)
 
@@ -263,37 +249,14 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.config.Shards[i] = 0
 		kv.prevConfig.Shards[i] = 0
 	}
+	kv.MIP = false
+	kv.lastApplied = 0
 
 	kv.readSnapshot(kv.persister.ReadSnapshot())
-	for _, entry := range kv.rf.GetLog() {
-		if entry.Index == 0 {
-			continue
-		}
-		if entry.Index > kv.rf.GetLastApplied() {
-			break
-		}
-		if entry.Index > kv.lastApplied {
-			// loaded from snapshot
-			continue
-		}
-		kv.lastApplied = entry.Index
-		op, _ := entry.Command.(Op)
-		if op.Op == "StartConfigChange" || op.Op == "CompleteConfigChange" {
-			if kv.config.Num < op.NewConfig.Num {
-				if op.Op == "StartConfigChange" {
-					kv.handleConfigChange(op)
-				} else {
-					kv.handleCompleteConfigChange(op)
-				}
-			}
-		} else {
-			kv.handleClientOperation(op, entry.Term)
-		}
-	}
 
-	go kv.Applier()
-	go kv.ConfigChecker()
-	go kv.SnapshotChecker()
+	go kv.applier()
+	go kv.configChecker()
+	go kv.snapshotChecker()
 
 	return kv
 }

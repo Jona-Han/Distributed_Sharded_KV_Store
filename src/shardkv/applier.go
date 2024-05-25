@@ -1,63 +1,40 @@
 package shardkv
 
 import "fmt"
-import "strconv"
 
-func (kv *ShardKV) Applier() {
+func (kv *ShardKV) applier() {
 	// continuously process messages from the applyCh channel
 	for !kv.killed() {
 		msg := <-kv.applyCh // wait for a message from Raft
 		if msg.CommandValid {
-			op, ok := msg.Command.(Op)
-			if msg.CommandIndex == 0 {
-				continue
-			}
+			op, _ := msg.Command.(Op)
+			kv.lastApplied = msg.CommandIndex
 
-			if ok && (op.Op == "StartConfigChange" || op.Op == "CompleteConfigChange") {
-				valid := false
-				kv.shardLock.Lock()
-				if op.Op == "StartConfigChange" {
-					valid = kv.handleConfigChange(op)
-				} else {
-					valid = kv.handleCompleteConfigChange(op)
-				}
-				kv.shardLock.Unlock()
-				kv.mu.Lock()
-				if ch, ok := kv.notifyChans[termPlusIndexToStr(msg.CommandTerm, msg.CommandIndex)]; ok {
-					delete(kv.notifyChans, termPlusIndexToStr(msg.CommandTerm, msg.CommandIndex))
-					kv.mu.Unlock()
-					select {
-						case ch <- CacheResponse{OK: valid,}:
-							kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for config change term %d, idx %d", kv.me, msg.CommandTerm, msg.CommandIndex))
-						default:
-							// if the channel is already full, skip to prevent blocking.
-					}
-				} else {
-					kv.mu.Unlock()
-				}
-			} else if ok {
-				kv.shardLock.Lock()
-				kv.lastApplied = msg.CommandIndex
-				response := kv.handleClientOperation(op, msg.CommandTerm)
-				kv.shardLock.Unlock()
-
-				kv.mu.Lock()
-				if ch, ok := kv.notifyChans[strconv.FormatInt(op.ClerkId, 10)]; ok {
-					kv.mu.Unlock()
-					select {
-						case ch <-response:
-							kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for op ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
-						default:
-							// if the channel is already full, skip to prevent blocking.
-					}
-				} else {
-					kv.mu.Unlock()
-				}
+			var response CacheResponse
+			kv.sl.Lock()
+			if op.Op == "StartConfigChange" {
+				response = kv.handleConfigChange(op)
+			} else if op.Op == "CompleteConfigChange" {
+				response = kv.handleCompleteConfigChange(op)
+			} else {
+				response = kv.handleClientOperation(op, msg.CommandTerm)
 			}
-		} else if msg.SnapshotValid {
-			kv.shardLock.Lock()
+			kv.sl.Unlock()
+
+			// Send message to channel
+			key := termPlusIndexToStr(msg.CommandTerm, msg.CommandIndex)
+			kv.mu.Lock()
+			if ch, ok := kv.notifyChans[key]; ok {
+				delete(kv.notifyChans, key)
+				kv.mu.Unlock()
+				ch <-response
+			} else {
+				kv.mu.Unlock()
+			}
+		} else {
+			kv.sl.Lock()
 			kv.readSnapshot(msg.Snapshot)
-			kv.shardLock.Unlock()
+			kv.sl.Unlock()
 			kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d processed a snapshot message", kv.gid, kv.me))
 		}
 	}
@@ -68,36 +45,35 @@ func (kv *ShardKV) handleClientOperation(op Op, term int) CacheResponse {
 
 	if !kv.acceptingKeyInShard(op.Key) {
 		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d rejecting op from raft ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
-		return CacheResponse{OK: false,}
-	}
-
-	response := CacheResponse{
-		Seq:		op.Seq,
-		Op: 		op.Op,
-		Term:		term,
+		return CacheResponse{OK: false}
 	}
 
 	lastReply, found := kv.cachedResponses[op.ClerkId]
 	if !found || lastReply.Seq < op.Seq {
 		// apply the operation to the state machine
+		response := CacheResponse{
+			Seq:		op.Seq,
+			Op: 		op.Op,
+			OK:			 true,
+		}
+
 		kv.applyOperation(op)
 		if op.Op == "Get" {
-			val, ok := kv.db[op.Key]
-			if !ok {
-				val = ""
+			if val, ok := kv.db[op.Key]; ok {
+				response.Value = val
+			} else {
+				response.Value = ""
 			}
-			response.Value = val
 		}
-		response.OK = true
+		
 		kv.cachedResponses[op.ClerkId] = response
+		return response
 	} else if op.Seq == lastReply.Seq {
 		kv.logger.Log(LogTopicOp, fmt.Sprintf("S%d sees already applied %s op with seq %d", kv.me, op.Op, op.Seq))
-		response = lastReply
-		response.OK = true
+		return lastReply
 	} else {
-		return CacheResponse{OK: false,}
+		return CacheResponse{OK: false}
 	}
-	return response
 }
 
 func (kv *ShardKV) applyOperation(op Op) {
@@ -106,11 +82,7 @@ func (kv *ShardKV) applyOperation(op Op) {
 			kv.db[op.Key] = op.Value
 			// kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, op.Value))
 		case "Append":
-			oldVal, ok := kv.db[op.Key]
-			if !ok {
-				oldVal = ""
-			}
-			kv.db[op.Key] = oldVal + op.Value
+			kv.db[op.Key] += op.Value
 			// kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, kv.db[op.Key]))
 		case "Get":
 			// kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d applying %s op with seq %d: %s || %s", kv.gid, kv.me, op.Op, op.Seq, op.Key, kv.db[op.Key]))
@@ -118,9 +90,9 @@ func (kv *ShardKV) applyOperation(op Op) {
 	}
 }
 
-func (kv *ShardKV) handleConfigChange(op Op) bool {
+func (kv *ShardKV) handleConfigChange(op Op) CacheResponse {
 	if kv.MIP || op.NewConfig.Num <= kv.config.Num {
-		return false
+		return CacheResponse{OK: false}
 	}
 	
 	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d started config change from %d to %d", kv.gid, kv.me, kv.config.Num, op.NewConfig.Num))
@@ -128,12 +100,12 @@ func (kv *ShardKV) handleConfigChange(op Op) bool {
 	copyConfig(&kv.prevConfig, &kv.config)
 	copyConfig(&kv.config, &op.NewConfig)
 
-	return true
+	return CacheResponse{OK: true}
 }
 
-func (kv *ShardKV) handleCompleteConfigChange(op Op) bool {
+func (kv *ShardKV) handleCompleteConfigChange(op Op) CacheResponse {
 	if !kv.MIP || op.NewConfig.Num != kv.config.Num {
-		return false
+		return CacheResponse{OK: false}
 	}
 	kv.MIP = false
 
@@ -152,5 +124,5 @@ func (kv *ShardKV) handleCompleteConfigChange(op Op) bool {
 		}
 	}
 	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
-	return true
+	return CacheResponse{OK: true}
 }
