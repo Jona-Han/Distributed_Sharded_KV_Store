@@ -6,9 +6,9 @@ import "cpsc416/raft"
 import "sync"
 import "cpsc416/labgob"
 import "cpsc416/shardctrler"
-import "time"
 import "fmt"
 import "sync/atomic"
+import "strconv"
 
 
 type Op struct {
@@ -31,6 +31,8 @@ type CacheResponse struct {
 	Seq 		int64
 	Value		string
 	Op			string
+	Term 		int
+	OK			bool
 }
 
 
@@ -53,26 +55,27 @@ type ShardKV struct {
 	prevConfig  shardctrler.Config
 
 	cachedResponses   	map[int64]CacheResponse 		// To check for duplicate requests
-	notifyChans    		map[int64]chan CacheResponse
+	notifyChans    		map[string]chan CacheResponse
 	lastApplied   		int
 
 	db             		map[string]string
 	MIP 				bool 				// Migration in progress
+	shardLock       sync.RWMutex
 }
 
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Check if the Op is a duplicate
-	kv.mu.Lock()
-	lastResponse, found := kv.cachedResponses[args.ClerkId]
-	if found && lastResponse.Seq == args.Seq {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Get request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
-		reply.Err = OK
-		reply.Value = lastResponse.Value
-		kv.mu.Unlock()
-		return
-	}
-	kv.mu.Unlock()
+	// kv.mu.Lock()
+	// lastResponse, found := kv.cachedResponses[args.ClerkId]
+	// if found && lastResponse.Seq == args.Seq {
+	// 	kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Get request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
+	// 	reply.Err = OK
+	// 	reply.Value = lastResponse.Value
+	// 	kv.mu.Unlock()
+	// 	return
+	// }
+	// kv.mu.Unlock()
 
 	op := Op {
 		Op:	"Get",
@@ -88,15 +91,15 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Check if the Op is a duplicate
-	kv.mu.Lock()
-	lastResponse, found := kv.cachedResponses[args.ClerkId]
-	if found && lastResponse.Seq == args.Seq {
-		kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Put/Append request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
-		reply.Err = OK
-		kv.mu.Unlock()
-		return
-	}
-	kv.mu.Unlock()
+	// kv.mu.Lock()
+	// lastResponse, found := kv.cachedResponses[args.ClerkId]
+	// if found && lastResponse.Seq == args.Seq {
+	// 	kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d received a duplicate Put/Append request from ClerkID %d, Seq %d", kv.gid, kv.me, args.ClerkId, args.Seq))
+	// 	reply.Err = OK
+	// 	kv.mu.Unlock()
+	// 	return
+	// }
+	// kv.mu.Unlock()
 
 	op := Op {
 		Op:	args.Op,
@@ -122,54 +125,47 @@ func (kv *ShardKV) acceptingKeyInShard(key string) bool {
 func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 	reply := CommonReply{}
 
-	kv.mu.Lock()
+	kv.shardLock.RLock()
 	if !kv.acceptingKeyInShard(op.Key) {
 		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d not accepting %s request for seq %d", kv.gid, kv.me, op.Op, op.Seq))
 		reply.Err = ErrWrongGroup
-		kv.mu.Unlock()
+		kv.shardLock.RUnlock()
 		return reply
 	}
 
 	if clerkConfigNum > kv.config.Num {
-		// kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d config is outdated %d compared to %d for seq %d", kv.gid, kv.me, kv.config.Num, clerkConfigNum, op.Seq))
+		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d config is outdated %d compared to %d for seq %d", kv.gid, kv.me, kv.config.Num, clerkConfigNum, op.Seq))
 		reply.Err = ErrOutdated
-		kv.mu.Unlock()
+		kv.shardLock.RUnlock()
 		return reply
 	}
-
-	if _, isLeader := kv.rf.GetState(); !isLeader {
-		// kv.logger.Log(LogTopicServer, fmt.Sprintf("%d - S%d is not the leader for %s request for seq %d", kv.gid, kv.me, op.Op, op.Seq))
-		reply.Err = ErrWrongLeader
-		kv.mu.Unlock()
-		return reply
-	}
+	kv.shardLock.RUnlock()
 
 	kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d submits %s Op for seq %d, key=%d", kv.gid, kv.me, op.Op, op.Seq, key2shard(op.Key)))
 
+	kv.mu.Lock()
+	_, term, leader := kv.rf.Start(op)
+
+	if !leader {
+		kv.mu.Unlock()
+		reply.Err = ErrWrongLeader
+		return reply
+	}
+
+
 	ch := make(chan CacheResponse, 1)
-	kv.notifyChans[op.ClerkId] = ch
-	kv.rf.Start(op)
+	kv.notifyChans[strconv.FormatInt(op.ClerkId, 10)] = ch
 	kv.mu.Unlock()
+	resp := <-ch
 
-	// set up a timer to avoid waiting indefinitely.
-	timer := time.NewTimer(WaitTimeOut)
-	defer timer.Stop()
-
-	select{
-	case <-timer.C: // timer expires
-		kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d timed out waiting for request seq %d", kv.gid, kv.me, op.Seq))
-		reply.Err = ErrTimeOut
-	case resultFromApply := <-ch: // wait for the Op to be applied
-		// check if the Op corresponds to the request
-		if resultFromApply.Seq != op.Seq {
-			kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d received a non-matching %s result", kv.gid, kv.me, op.Op))
-			reply.Err = ErrWrongLeader
-		} else {
-			if (resultFromApply.Op == "Get") {
-				reply.Value = resultFromApply.Value
-			}
-			reply.Err = OK
-		}
+	kv.logger.Log(LogTopicOp, fmt.Sprintf("%d - S%d received %s Op for seq %d, key=%d", kv.gid, kv.me, op.Op, op.Seq, key2shard(op.Key)))
+	if !resp.OK {
+		reply.Err = ErrWrongGroup
+	} else if resp.Term != term {
+		reply.Err = ErrWrongLeader
+	} else {
+		reply.Value = resp.Value
+		reply.Err = OK
 	}
 	return reply
 } 
@@ -222,6 +218,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(map[string]string{})
 	labgob.Register(map[int64]CacheResponse{})
 	labgob.Register(map[int]bool{})
+	labgob.Register(CacheResponse{})
+	labgob.Register(map[int][]string{})
 	
 
 	kv := new(ShardKV)
@@ -247,7 +245,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.db = make(map[string]string)
 
 	kv.cachedResponses = make(map[int64]CacheResponse)
-	kv.notifyChans = make(map[int64]chan CacheResponse)
+	kv.notifyChans = make(map[string]chan CacheResponse)
 
 	kv.config = shardctrler.Config{
 		Num:    0,
@@ -266,10 +264,36 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.prevConfig.Shards[i] = 0
 	}
 
+	kv.readSnapshot(kv.persister.ReadSnapshot())
+	for _, entry := range kv.rf.GetLog() {
+		if entry.Index == 0 {
+			continue
+		}
+		if entry.Index > kv.rf.GetLastApplied() {
+			break
+		}
+		if entry.Index > kv.lastApplied {
+			// loaded from snapshot
+			continue
+		}
+		kv.lastApplied = entry.Index
+		op, _ := entry.Command.(Op)
+		if op.Op == "StartConfigChange" || op.Op == "CompleteConfigChange" {
+			if kv.config.Num < op.NewConfig.Num {
+				if op.Op == "StartConfigChange" {
+					kv.handleConfigChange(op)
+				} else {
+					kv.handleCompleteConfigChange(op)
+				}
+			}
+		} else {
+			kv.handleClientOperation(op, entry.Term)
+		}
+	}
+
 	go kv.Applier()
 	go kv.ConfigChecker()
-	go kv.ConfigMigrator()
-	go kv.snapshotChecker()
+	go kv.SnapshotChecker()
 
 	return kv
 }

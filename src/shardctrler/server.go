@@ -124,6 +124,7 @@ func (sc *ShardCtrler) checkIfLeaderAndSendOp(op Op, clerkId int64, seq int64) C
 		reply.Err = ErrTimeOut
 	case resultOp := <-ch: // wait for the operation to be applied
 		// check if the operation corresponds to the request
+		sc.mu.Lock()
 		if resultOp.ClerkId != clerkId || resultOp.Seq != seq {
 			sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d received a non-matching %s result", sc.me, op.Operation))
 			reply.WrongLeader = true
@@ -136,6 +137,7 @@ func (sc *ShardCtrler) checkIfLeaderAndSendOp(op Op, clerkId int64, seq int64) C
 					reply.Config = sc.configs[configNum]
 				}
 			}
+			sc.mu.Unlock()
 			sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d successfully completed %s request", sc.me, op.Operation))
 		}
 	}

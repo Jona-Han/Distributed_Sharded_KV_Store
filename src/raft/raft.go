@@ -90,6 +90,17 @@ type Raft struct {
 	applyMsgCh chan int			// channel to signal commandApplier
 }
 
+func (rf *Raft) GetLog() []LogEntry {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.log
+}
+
+func (rf *Raft) GetLastApplied() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.lastApplied
+}
 // Returns currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()

@@ -20,7 +20,7 @@ const (
 
 const WaitTimeOut = 2000 * time.Millisecond
 
-const Debug = true
+const Debug = false
 
 type Err string
 

@@ -1,5 +1,8 @@
 package shardkv
-import "cpsc416/shardctrler"
+import (
+	"cpsc416/shardctrler"
+	"strconv"
+)
 
 func copyConfig(to *shardctrler.Config, from *shardctrler.Config) {
 	to.Num = from.Num
@@ -10,4 +13,8 @@ func copyConfig(to *shardctrler.Config, from *shardctrler.Config) {
 	for k, v := range from.Groups {
 		to.Groups[k] = v
 	}
+}
+
+func termPlusIndexToStr(term int, index int) string {
+	return strconv.Itoa(term) + "." + strconv.Itoa(index)
 }
