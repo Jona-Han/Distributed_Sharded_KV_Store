@@ -33,7 +33,7 @@ The system is composed of two main components:
 
 1. **Clone the Repository:**
     ```sh
-    git clone https://github.com/Jona-Han/Distributed_Sharded_KV_Store.git
+    https://github.com/Jona-Han/Sharded_KVS.git
     cd src/shardkv
     ```
 
