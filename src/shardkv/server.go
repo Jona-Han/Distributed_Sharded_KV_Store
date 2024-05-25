@@ -24,6 +24,9 @@ type Op struct {
 	PrevConfig   		shardctrler.Config
 	ShardData           map[string]string
 	NewCache    		map[int64]CacheResponse
+
+	ShardsToDelete		map[int]bool
+	ShardsReceived		map[int]map[int]bool
 }
 
 type CacheResponse struct {
@@ -55,6 +58,8 @@ type ShardKV struct {
 	cachedResponses   	map[int64]CacheResponse 		// To check for duplicate requests
 	notifyChans    		map[string]chan CacheResponse
 	lastApplied   		int
+
+	shardsPendingDeletion map[int]bool
 
 	db             		map[string]string
 	MIP 				bool 				// Migration in progress
@@ -232,6 +237,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.db = make(map[string]string)
 	kv.cachedResponses = make(map[int64]CacheResponse)
 	kv.notifyChans = make(map[string]chan CacheResponse)
+	kv.shardsPendingDeletion = make(map[int]bool)
 
 	kv.config = shardctrler.Config{
 		Num:    0,

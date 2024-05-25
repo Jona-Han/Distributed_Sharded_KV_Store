@@ -13,6 +13,7 @@ const (
 	LogTopicConfigChange
 	LogTopicMIP
 	LogTopicRequestShard
+	LogTopicShardReceipt
 )
 const TermColor string = "\x1b[0m"
 
@@ -79,6 +80,8 @@ func (l *Logger) topicToString(topic LogTopic) (string, string) {
 		return "CONFIG", "\x1b[33m"
 	case LogTopicRequestShard:
 		return "REQUEST_SHARD", "\x1b[91m"
+	case LogTopicShardReceipt:
+		return "SHARD_RECEIPT", "\x1b[92m"
 	default:
 		return "MISC", "\x1b[97m" // Bright white color
 	}

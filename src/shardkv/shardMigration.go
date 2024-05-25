@@ -67,7 +67,7 @@ func (kv *ShardKV) startConfigChange(migrationInProgress bool, prevConfig shardc
 		}
 		kv.sl.RUnlock()
 	
-		newData, newCachedResponses := kv.requestNewShards(requiredShards, prevConfig)
+		newData, newCachedResponses, shardsReceived := kv.requestNewShards(requiredShards, prevConfig)
 	
 		opToSend := Op{
 			Op:          "CompleteConfigChange",
@@ -75,6 +75,7 @@ func (kv *ShardKV) startConfigChange(migrationInProgress bool, prevConfig shardc
 			NewConfig:   newConfig,
 			ShardData:   newData,
 			NewCache:    newCachedResponses,
+			ShardsReceived:	shardsReceived,
 		}
 	
 		ch := make(chan CacheResponse, 1)
@@ -94,7 +95,6 @@ func (kv *ShardKV) startConfigChange(migrationInProgress bool, prevConfig shardc
 	} else {
 		kv.sl.RUnlock()
 	}
-	
 }
 
 type RequestShardArgs struct {
@@ -108,45 +108,43 @@ type RequestShardReply struct {
 	Err	Err
 }
 
-func (kv *ShardKV) requestNewShards(requiredShards []int, prevConfig shardctrler.Config) (map[string]string, map[int64]CacheResponse) {
+func (kv *ShardKV) requestNewShards(requiredShards []int, 
+	prevConfig shardctrler.Config) (map[string]string, map[int64]CacheResponse, map[int]map[int]bool) {
 	newKv := make(map[string]string)
 	newClientReplyMap := make(map[int64]CacheResponse)
-	shardsByGroup := make(map[int][]int)
+	shardsByGroup := make(map[int]map[int]bool)
 
 	// Group required shards by group ID
 	for _, shard := range requiredShards {
 		gid := prevConfig.Shards[shard]
-		shardsByGroup[gid] = append(shardsByGroup[gid], shard)
+		if _, ok := shardsByGroup[gid]; !ok {
+			shardsByGroup[gid] = make(map[int]bool)
+		}
+		shardsByGroup[gid][shard] = true
 	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
 	// Request shards from each group
-	for gid, shards := range shardsByGroup {
+	for gid, shardsMap := range shardsByGroup {
 		wg.Add(1)
 
-		go func(gid int, shards []int) {
+		go func(gid int, shards map[int]bool) {
 			defer wg.Done()
 			group, exists := prevConfig.Groups[gid]
 			if !exists {
 				return
 			}
 
-			shardsMap := make(map[int]bool)
-			for _, shard := range shards {
-				shardsMap[shard] = true
-			}
-
 			req := RequestShardArgs{
-				ShardsRequested:    shardsMap,
+				ShardsRequested:    shards,
 				ConfigNum:			prevConfig.Num,
 			}
 			reply := RequestShardReply{}
 			kv.sendShardRequest(&req, &reply, group)
 
 			mu.Lock()
-			defer mu.Unlock()
 
 			// Merge received data
 			for k, v := range reply.ShardData {
@@ -159,12 +157,15 @@ func (kv *ShardKV) requestNewShards(requiredShards []int, prevConfig shardctrler
 					newClientReplyMap[cid] = newReply
 				}
 			}
-		}(gid, shards)
+			mu.Unlock()
+
+		}(gid, shardsMap)
 	}
 	
 	wg.Wait()
-	return newKv, newClientReplyMap
+	return newKv, newClientReplyMap, shardsByGroup
 }
+
 
 func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardReply, group []string) {
 	servers := make([]*labrpc.ClientEnd, len(group))
@@ -203,15 +204,15 @@ func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardR
 func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply) {
 	kv.sl.RLock()
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		kv.sl.RUnlock()
 		kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard but not the leader", kv.gid, kv.me))
+		kv.sl.RUnlock()
 		reply.Err = ErrWrongLeader
 		return
 	}
 
 	if args.ConfigNum >= kv.config.Num {
-		kv.sl.RUnlock()
 		kv.logger.Log(LogTopicRequestShard, fmt.Sprintf("%d - S%d requestShard outdated %d < %d", kv.gid, kv.me, kv.config.Num, args.ConfigNum))
+		kv.sl.RUnlock()
 		reply.Err = ErrOutdated
 		return
 	}

@@ -8,15 +8,19 @@ func (kv *ShardKV) applier() {
 		msg := <-kv.applyCh // wait for a message from Raft
 		if msg.CommandValid {
 			op, _ := msg.Command.(Op)
+			kv.sl.Lock()
 			kv.lastApplied = msg.CommandIndex
 
 			var response CacheResponse
-			kv.sl.Lock()
-			if op.Op == "StartConfigChange" {
+
+			switch op.Op {
+			case "StartConfigChange":
 				response = kv.handleConfigChange(op)
-			} else if op.Op == "CompleteConfigChange" {
+			case "CompleteConfigChange":
 				response = kv.handleCompleteConfigChange(op)
-			} else {
+			case "DeleteShards":
+				response = kv.handleDeleteShards(op)
+			default:
 				response = kv.handleClientOperation(op, msg.CommandTerm)
 			}
 			kv.sl.Unlock()
@@ -91,8 +95,17 @@ func (kv *ShardKV) applyOperation(op Op) {
 }
 
 func (kv *ShardKV) handleConfigChange(op Op) CacheResponse {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
 	if kv.MIP || op.NewConfig.Num <= kv.config.Num {
 		return CacheResponse{OK: false}
+	}
+
+	for shard, gid := range kv.config.Shards {
+		if gid == kv.gid && op.NewConfig.Shards[shard] != kv.gid {
+			kv.shardsPendingDeletion[shard] = true
+		}
 	}
 	
 	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d started config change from %d to %d", kv.gid, kv.me, kv.config.Num, op.NewConfig.Num))
@@ -109,6 +122,8 @@ func (kv *ShardKV) handleCompleteConfigChange(op Op) CacheResponse {
 	}
 	kv.MIP = false
 
+	go kv.sendReceiptConfirmations(op.ShardsReceived, kv.prevConfig)
+
 	copyConfig(&kv.prevConfig, &kv.config)
 
 	// Update shard data into k/v
@@ -123,6 +138,23 @@ func (kv *ShardKV) handleCompleteConfigChange(op Op) CacheResponse {
 			kv.cachedResponses[clerkId] = newResponse
 		}
 	}
-	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
+	// kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
+	return CacheResponse{OK: true}
+}
+
+func (kv *ShardKV) handleDeleteShards(op Op) CacheResponse {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	for shard := range op.ShardsToDelete {
+		if _, exists := kv.shardsPendingDeletion[shard]; exists {
+			delete(kv.shardsPendingDeletion, shard)
+			for k := range kv.db {
+				if key2shard(k) == shard {
+					delete(kv.db, k)
+				}
+			}
+		}
+	}
+	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d deleted shards %v", kv.gid, kv.me, op.ShardsToDelete))
 	return CacheResponse{OK: true}
 }
