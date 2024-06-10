@@ -1,3 +1,8 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
 //
@@ -8,15 +13,19 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "cpsc416/labrpc"
-import "crypto/rand"
-import "math/big"
-import "cpsc416/shardctrler"
-import "time"
-import "fmt"
-import "sync/atomic"
+import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
+	"sync/atomic"
+	"time"
 
-// which shard is a key in?
+	"cpsc416/labrpc"
+	"cpsc416/shardctrler"
+)
+
+
+// key2shard determines which shard a given key belongs to.
 func key2shard(key string) int {
 	shard := 0
 	if len(key) > 0 {
@@ -26,6 +35,7 @@ func key2shard(key string) int {
 	return shard
 }
 
+// nrand generates a random int64 number.
 func nrand() int64 {
 	max := big.NewInt(int64(1) << 62)
 	bigx, _ := rand.Int(rand.Reader, max)
@@ -33,6 +43,7 @@ func nrand() int64 {
 	return x
 }
 
+// Clerk represents a client that communicates with shard controller and shard key/value servers.
 type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
@@ -43,6 +54,12 @@ type Clerk struct {
 	logger *Logger
 }
 
+
+// MakeClerk creates a new Clerk instance.
+//
+// ctrlers is used to create a shard controller clerk.
+// make_end is a function that converts a server name to a labrpc.ClientEnd for RPC communication.
+//
 // the tester calls MakeClerk.
 //
 // ctrlers[] is needed to call shardctrler.MakeClerk().
@@ -68,10 +85,9 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	return ck
 }
 
-// fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-// You will have to modify this function.
+// Get fetches the current value for a key.
+// Returns "" if the key does not exist.
+// Keeps trying indefinitely in the face of errors.
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{
 		Key:		key,
@@ -108,8 +124,8 @@ func (ck *Clerk) Get(key string) string {
 	return ""
 }
 
-// shared by Put and Append.
-// You will have to modify this function.
+// PutAppend is shared by Put and Append operations.
+// Keeps trying indefinitely in the face of errors.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{
 		Key:		key,
@@ -145,9 +161,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 }
 
+// Put stores a key-value pair in the key/value store.
 func (ck *Clerk) Put(key string, value string) {
 	ck.PutAppend(key, value, "Put")
 }
+
+// Append appends a value to an existing key in the key/value store.
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
 }

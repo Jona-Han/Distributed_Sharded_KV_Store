@@ -1,12 +1,24 @@
+
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
-import "cpsc416/shardctrler"
-import "log"
-import "fmt"
-import "cpsc416/labgob"
-import "bytes"
-import "time"
+import (
+	"bytes"
+	"fmt"
+	"log"
+	"time"
 
+	"cpsc416/labgob"
+	"cpsc416/shardctrler"
+)
+
+// snapshotChecker periodically checks if a snapshot needs to be taken
+// based on the current Raft state size. If the size exceeds the defined
+// threshold, a snapshot is created.
 func (kv *ShardKV) snapshotChecker() {
 	if kv.maxraftstate == -1  {
 		return
@@ -22,6 +34,9 @@ func (kv *ShardKV) snapshotChecker() {
 	}
 }
 
+// createSnapshot creates a snapshot of the current state and saves it
+// using the Raft protocol. The snapshot includes the database, cached responses,
+// and the current and previous configurations.
 func (kv *ShardKV) createSnapshot() {
 	kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d starts taking a snapshot", kv.me))
 
@@ -59,6 +74,7 @@ func (kv *ShardKV) createSnapshot() {
 	kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d completed taking a snapshot", kv.me))
 }
 
+// readSnapshot reads and restores the state from a given snapshot.
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	if snapshot == nil || len(snapshot) < 1 {
 		return

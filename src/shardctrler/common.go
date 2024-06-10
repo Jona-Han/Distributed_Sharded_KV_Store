@@ -1,4 +1,9 @@
+/*
+Package shardctrler provides mechanisms to manage shard configurations in a distributed system.
+It allows joining new groups, leaving groups, and moving shards between groups.
+*/
 package shardctrler
+
 import "time"
 
 //
@@ -14,8 +19,6 @@ import "time"
 // replica group responsible for each shard. Configs are numbered. Config
 // #0 is the initial configuration, with no groups and all shards
 // assigned to group 0 (the invalid group).
-//
-// You will need to add fields to the RPC argument structs.
 //
 
 // The number of shards.
@@ -36,58 +39,69 @@ const (
 	ErrTimeOut = "ErrTimeOut"
 )
 
+// WaitTimeOut specifies the timeout duration for operations.
 const WaitTimeOut = 2000 * time.Millisecond
 
+// Err represents an error message.
 type Err string
 
+// CommonReply is a common structure for replies from the shard controller.
 type CommonReply struct {
-	WrongLeader bool
-	Err 		Err
-	Config		Config
+	WrongLeader bool // indicates if the reply is from a wrong leader
+	Err         Err  // error message, if any
+	Config      Config // returned configuration, if applicable
 }
 
+// JoinArgs represents the arguments for a Join request.
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
-	ClerkId	int64
-	Seq int64
+	ClerkId int64            // unique identifier for the Clerk
+	Seq     int64            // sequence number for the request
 }
 
+// JoinReply represents the reply for a Join request.
 type JoinReply struct {
-	WrongLeader bool
-	Err         Err
+	WrongLeader bool 	// indicates if the reply is from a wrong leader
+	Err         Err  	// error message, if any
 }
 
+// LeaveArgs represents the arguments for a Leave request.
 type LeaveArgs struct {
-	GIDs []int
-	ClerkId	int64
-	Seq int64
+	GIDs    []int 		// list of GIDs to leave
+	ClerkId int64 		// unique identifier for the Clerk
+	Seq     int64 		// sequence number for the request
 }
 
+// LeaveReply represents the reply for a Leave request.
 type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
+	WrongLeader bool 	// indicates if the reply is from a wrong leader
+	Err         Err  	// error message, if any
 }
 
+// MoveArgs represents the arguments for a Move request.
 type MoveArgs struct {
-	Shard int
-	GID   int
-	ClerkId	int64
-	Seq int64
+	Shard   int   		// shard number to move
+	GID     int   		// target group ID
+	ClerkId int64 		// unique identifier for the Clerk
+	Seq     int64 		// sequence number for the request
 }
 
+// MoveReply represents the reply for a Move request.
 type MoveReply struct {
-	WrongLeader bool
-	Err         Err
+	WrongLeader bool 	// indicates if the reply is from a wrong leader
+	Err         Err  	// error message, if any
 }
 
+// QueryArgs represents the arguments for a Query request.
 type QueryArgs struct {
-	Num int // desired config number
-	ClerkId	int64
-	Seq int64
+	Num     int   		// desired config number
+	ClerkId int64 		// unique identifier for the Clerk
+	Seq     int64 		// sequence number for the request
 }
 
+// QueryReply represents the reply for a Query request.
 type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+	WrongLeader bool  	// indicates if the reply is from a wrong leader
+	Err         Err    	// error message, if any
+	Config      Config 	// returned configuration
 }

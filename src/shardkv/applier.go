@@ -1,7 +1,13 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
 import "fmt"
 
+// applier continuously processes messages from the applyCh channel.
 func (kv *ShardKV) applier() {
 	// continuously process messages from the applyCh channel
 	for !kv.killed() {
@@ -44,9 +50,9 @@ func (kv *ShardKV) applier() {
 	}
 }
 
+// handleClientOperation processes a client operation (Put, Append, Get).
 func (kv *ShardKV) handleClientOperation(op Op, term int) CacheResponse {
 	// check if the operation is the latest from the clerk
-
 	if !kv.acceptingKeyInShard(op.Key) {
 		kv.logger.Log(LogTopicServer, fmt.Sprintf("S%d rejecting op from raft ClerkId %d, seq %d", kv.me, op.ClerkId, op.Seq))
 		return CacheResponse{OK: false}
@@ -80,6 +86,7 @@ func (kv *ShardKV) handleClientOperation(op Op, term int) CacheResponse {
 	}
 }
 
+// applyOperation applies the given operation (Put, Append, Get) to the state machine.
 func (kv *ShardKV) applyOperation(op Op) {
 	switch op.Op {
 		case "Put":
@@ -94,6 +101,7 @@ func (kv *ShardKV) applyOperation(op Op) {
 	}
 }
 
+// handleConfigChange processes a configuration change operation.
 func (kv *ShardKV) handleConfigChange(op Op) CacheResponse {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -116,6 +124,7 @@ func (kv *ShardKV) handleConfigChange(op Op) CacheResponse {
 	return CacheResponse{OK: true}
 }
 
+// handleCompleteConfigChange completes the configuration change process.
 func (kv *ShardKV) handleCompleteConfigChange(op Op) CacheResponse {
 	if !kv.MIP || op.NewConfig.Num != kv.config.Num {
 		return CacheResponse{OK: false}
@@ -138,10 +147,11 @@ func (kv *ShardKV) handleCompleteConfigChange(op Op) CacheResponse {
 			kv.cachedResponses[clerkId] = newResponse
 		}
 	}
-	// kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
+	kv.logger.Log(LogTopicConfigChange, fmt.Sprintf("%d - S%d completed config change from %d to %d - %v", kv.gid, kv.me, op.PrevConfig.Num, op.NewConfig.Num, kv.config.Shards))
 	return CacheResponse{OK: true}
 }
 
+// handleDeleteShards handles the deletion of shards.
 func (kv *ShardKV) handleDeleteShards(op Op) CacheResponse {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()

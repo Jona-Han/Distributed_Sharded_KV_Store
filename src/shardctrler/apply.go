@@ -1,7 +1,12 @@
+/*
+Package shardctrler provides mechanisms to manage shard configurations in a distributed system.
+It allows joining new groups, leaving groups, and moving shards between groups.
+*/
 package shardctrler
 
 import "sort"
 
+// applyJoin handles the joining of new groups by creating a new configuration.
 func (sc *ShardCtrler) applyJoin(op Op) {
 	// Read the previous configuration
 	prevConfig := sc.configs[len(sc.configs)-1]
@@ -30,6 +35,7 @@ func (sc *ShardCtrler) applyJoin(op Op) {
 	sc.configs = append(sc.configs, newConfig)
 }
 
+// applyLeave handles the leaving of groups by creating a new configuration.
 func (sc *ShardCtrler) applyLeave(op Op) {
 	// Read the previous configuration
 	prevConfig := sc.configs[len(sc.configs)-1]
@@ -57,6 +63,7 @@ func (sc *ShardCtrler) applyLeave(op Op) {
 	sc.configs = append(sc.configs, newConfig)
 }
 
+// applyMove handles the movement of shards between groups by creating a new configuration.
 func (sc *ShardCtrler) applyMove(op Op) {
 	// Read the previous configuration
 	prevConfig := sc.configs[len(sc.configs)-1]

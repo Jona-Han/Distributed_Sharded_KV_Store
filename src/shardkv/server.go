@@ -1,18 +1,26 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
 
-import "cpsc416/labrpc"
-import "cpsc416/raft"
-import "sync"
-import "cpsc416/labgob"
-import "cpsc416/shardctrler"
-import "fmt"
-import "sync/atomic"
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
 
+	"cpsc416/labgob"
+	"cpsc416/labrpc"
+	"cpsc416/raft"
+	"cpsc416/shardctrler"
+)
+
+
+// Op represents an operation to be applied by the ShardKV server.
 
 type Op struct {
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
 	Op 	string
 	ClerkId		int64
 	Seq 		int64
@@ -29,6 +37,7 @@ type Op struct {
 	ShardsReceived		map[int]map[int]bool
 }
 
+// CacheResponse represents a response to be cached for handling duplicate requests.
 type CacheResponse struct {
 	Seq 		int64
 	Value		string
@@ -36,7 +45,7 @@ type CacheResponse struct {
 	OK			bool
 }
 
-
+// ShardKV represents a sharded key/value server.
 type ShardKV struct {
 	mu           sync.Mutex
 	me           int
@@ -66,7 +75,7 @@ type ShardKV struct {
 	sl       sync.RWMutex
 }
 
-
+// Get handles the Get RPC request.
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Check if the Op is a duplicate
 	op := Op {
@@ -80,7 +89,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	reply.Value = res.Value
 }
 
-
+// PutAppend handles the Put and Append RPC requests.
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Check if the Op is a duplicate
 	op := Op {
@@ -94,6 +103,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	reply.Err = res.Err
 }
 
+// acceptingKeyInShard checks if the current server is responsible for the given key.
 func (kv *ShardKV) acceptingKeyInShard(key string) bool {
 	if !kv.MIP {
 		return kv.config.Shards[key2shard(key)] == kv.gid
@@ -104,6 +114,7 @@ func (kv *ShardKV) acceptingKeyInShard(key string) bool {
 	}
 }
 
+// checkAndSendOp checks for duplicates and sends the operation to Raft if needed.
 func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 	reply := CommonReply{}
 
@@ -161,46 +172,29 @@ func (kv *ShardKV) checkAndSendOp(op Op, clerkConfigNum int) CommonReply {
 	return reply
 } 
 
-// the tester calls Kill() when a ShardKV instance won't
-// be needed again. you are not required to do anything
-// in Kill(), but it might be convenient to (for example)
-// turn off debug output from this instance.
+// Kill stops the ShardKV instance.
 func (kv *ShardKV) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 }
 
+// killed checks if the ShardKV instance is stopped.
 func (kv *ShardKV) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
 }
 
+// StartServer initializes a new ShardKV server.
 // servers[] contains the ports of the servers in this group.
 //
 // me is the index of the current server in servers[].
 //
-// the k/v server should store snapshots through the underlying Raft
-// implementation, which should call persister.SaveStateAndSnapshot() to
-// atomically save the Raft state along with the snapshot.
-//
 // the k/v server should snapshot when Raft's saved state exceeds
 // maxraftstate bytes, in order to allow Raft to garbage-collect its
-// log. if maxraftstate is -1, you don't need to snapshot.
+// log. if maxraftstate is -1 doesn't snapshot.
 //
 // gid is this group's GID, for interacting with the shardctrler.
 //
-// pass ctrlers[] to shardctrler.MakeClerk() so you can send
-// RPCs to the shardctrler.
-//
-// make_end(servername) turns a server name from a
-// Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
-// send RPCs. You'll need this to send RPCs to other groups.
-//
-// look at client.go for examples of how to use ctrlers[]
-// and make_end() to send RPCs to the group owning a specific shard.
-//
-// StartServer() must return quickly, so it should start goroutines
-// for any long-running work.
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.

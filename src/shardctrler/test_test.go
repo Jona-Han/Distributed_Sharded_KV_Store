@@ -1,3 +1,7 @@
+/*
+Package shardctrler provides mechanisms to manage shard configurations in a distributed system.
+It allows joining new groups, leaving groups, and moving shards between groups.
+*/
 package shardctrler
 
 import (
@@ -6,8 +10,6 @@ import (
 	"testing"
 	"time"
 )
-
-// import "time"
 
 func check(t *testing.T, groups []int, ck *Clerk) {
 	c := ck.Query(-1)

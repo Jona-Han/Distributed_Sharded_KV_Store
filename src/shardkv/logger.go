@@ -1,3 +1,8 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
 import (

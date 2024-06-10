@@ -1,4 +1,10 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
+
 import (
 	"cpsc416/labrpc"
 	"cpsc416/shardctrler"
@@ -6,14 +12,17 @@ import (
 	"sync"
 )
 
+// ConfirmShardReceiptArgs represents the arguments for confirming shard receipt.
 type ConfirmShardReceiptArgs struct {
-	ShardsConfirmed map[int]bool
+	ShardsConfirmed map[int]bool 		// The shards that have been confirmed as received
 }
 
+// ConfirmShardReceiptReply represents the reply to a shard receipt confirmation.
 type ConfirmShardReceiptReply struct {
-	Err Err
+	Err Err 							// Error information
 }
 
+// ConfirmShardReceipt handles the confirmation of shard receipt and starts the process to delete the shards.
 func (kv *ShardKV) ConfirmShardReceipt(args *ConfirmShardReceiptArgs, reply *ConfirmShardReceiptReply) {
 	kv.mu.Lock()
 
@@ -45,6 +54,7 @@ func (kv *ShardKV) ConfirmShardReceipt(args *ConfirmShardReceiptArgs, reply *Con
 	reply.Err = OK
 }
 
+// sendReceiptConfirmations sends confirmations of shard receipt to the relevant groups.
 func (kv *ShardKV) sendReceiptConfirmations(shardsByGroup map[int]map[int]bool, prevConfig shardctrler.Config) {
 	var wg sync.WaitGroup
 
@@ -69,6 +79,7 @@ func (kv *ShardKV) sendReceiptConfirmations(shardsByGroup map[int]map[int]bool, 
 	wg.Wait()
 }
 
+// sendShardReceiptConfirmation sends a shard receipt confirmation request to a specified group.
 func (kv *ShardKV) sendShardReceiptConfirmation(args *ConfirmShardReceiptArgs, group []string) {
 	servers := make([]*labrpc.ClientEnd, len(group))
 	for i, serverName := range group {

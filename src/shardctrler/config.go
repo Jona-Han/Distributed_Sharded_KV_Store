@@ -1,11 +1,13 @@
+/*
+Package shardctrler provides mechanisms to manage shard configurations in a distributed system.
+It allows joining new groups, leaving groups, and moving shards between groups.
+*/
 package shardctrler
 
 import "cpsc416/labrpc"
 import "cpsc416/raft"
 import "testing"
 import "os"
-
-// import "log"
 import crand "crypto/rand"
 import "math/rand"
 import "encoding/base64"

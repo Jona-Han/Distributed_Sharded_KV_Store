@@ -1,21 +1,30 @@
+/*
+Package shardctrler provides mechanisms to manage shard configurations in a distributed system.
+It allows joining new groups, leaving groups, and moving shards between groups.
+*/
 package shardctrler
 
-import (
-	"fmt"
-)
+import "fmt"
 
+// LogTopic represents different logging topics for classification.
 type LogTopic int
 
 const (
+	// LogTopicClerk represents logs related to Clerk operations.
 	LogTopicClerk LogTopic = iota
+	// LogTopicServer represents logs related to Server operations.
 	LogTopicServer
 )
+
+// TermColor is the default terminal color reset code.
 const TermColor string = "\x1b[0m"
 
+// Logger is responsible for logging messages with topic-specific formatting.
 type Logger struct {
-	sid int
+	sid int			// server ID
 }
 
+// NewLogger creates a new Logger instance with the given server ID.
 func NewLogger(sId int) (*Logger, error) {
 	logger := &Logger{
 		sid: sId,
@@ -23,6 +32,7 @@ func NewLogger(sId int) (*Logger, error) {
 	return logger, nil
 }
 
+// Log logs a message under the specified topic with appropriate formatting.
 func (l *Logger) Log(topic LogTopic, message string) {
 	topicStr, _ := l.topicToString(topic)
 	color := l.sIdToColor(l.sid)
@@ -35,6 +45,7 @@ func (l *Logger) Log(topic LogTopic, message string) {
 	}
 }
 
+// sIdToColor returns a terminal color code based on the server ID.
 func (l *Logger) sIdToColor(sId int) string {
 	switch {
 	case sId == 0:
@@ -63,6 +74,8 @@ func (l *Logger) sIdToColor(sId int) string {
 	}
 
 }
+
+// topicToString converts a LogTopic to its string representation and associated color.
 func (l *Logger) topicToString(topic LogTopic) (string, string) {
 	switch topic {
 	case LogTopicClerk:

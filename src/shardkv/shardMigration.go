@@ -1,11 +1,21 @@
+/*
+Package shardkv implements a sharded, fault-tolerant key/value store
+built on top of a Raft-based replication system. It handles client key-value operations
+(Put, Append, Get)
+*/
 package shardkv
 
-import "cpsc416/shardctrler"
-import "time"
-import "fmt"
-import "sync"
-import "cpsc416/labrpc"
+import (
+	"fmt"
+	"sync"
+	"time"
 
+	"cpsc416/labrpc"
+	"cpsc416/shardctrler"
+)
+
+// configChecker periodically checks for new configurations and initiates
+// the configuration change process if necessary.
 func (kv *ShardKV) configChecker() {
 	for !kv.killed() {
 		kv.sl.RLock()
@@ -25,6 +35,8 @@ func (kv *ShardKV) configChecker() {
 	}
 }
 
+// startConfigChange starts the process of changing the configuration, including
+// requesting and applying new shards if needed.
 func (kv *ShardKV) startConfigChange(migrationInProgress bool, prevConfig shardctrler.Config, newConfig shardctrler.Config) {
 	if !migrationInProgress {
 		opToSend := Op{
@@ -97,17 +109,8 @@ func (kv *ShardKV) startConfigChange(migrationInProgress bool, prevConfig shardc
 	}
 }
 
-type RequestShardArgs struct {
-	ConfigNum 		int
-	ShardsRequested map[int]bool
-}
-
-type RequestShardReply struct {
-	ShardData 	map[string]string
-	PrevCache	map[int64]CacheResponse
-	Err	Err
-}
-
+// requestNewShards requests the necessary shards from other groups and returns
+// the new data and cached responses.
 func (kv *ShardKV) requestNewShards(requiredShards []int, 
 	prevConfig shardctrler.Config) (map[string]string, map[int64]CacheResponse, map[int]map[int]bool) {
 	newKv := make(map[string]string)
@@ -167,6 +170,20 @@ func (kv *ShardKV) requestNewShards(requiredShards []int,
 }
 
 
+// RequestShardArgs represents the arguments for a shard request.
+type RequestShardArgs struct {
+	ConfigNum       int            		// The configuration number at the time of the request
+	ShardsRequested map[int]bool   		// The shards being requested
+}
+
+// RequestShardReply represents the reply to a shard request.
+type RequestShardReply struct {
+	ShardData   map[string]string      	// The data for the requested shards
+	PrevCache   map[int64]CacheResponse // Cached responses for the requested shards
+	Err         Err                    	// Error information
+}
+
+// sendShardRequest sends a shard request to the specified group and handles the response.
 func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardReply, group []string) {
 	servers := make([]*labrpc.ClientEnd, len(group))
 	for i, serverName := range group {
@@ -201,6 +218,7 @@ func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardR
 	}
 }
 
+// RequestShard handles an incoming shard request from another group.
 func (kv *ShardKV) RequestShard(args *RequestShardArgs, reply *RequestShardReply) {
 	kv.sl.RLock()
 	if _, isLeader := kv.rf.GetState(); !isLeader {
