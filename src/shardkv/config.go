@@ -7,6 +7,8 @@ package shardkv
 
 import "cpsc416/shardctrler"
 import "cpsc416/labrpc"
+import "cpsc416/kvsRPC"
+import "cpsc416/labgob"
 import "testing"
 import "os"
 
@@ -37,14 +39,19 @@ func makeSeed() int64 {
 }
 
 // Randomize server handles
-func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
+func random_handles(kvh []*labrpc.ClientEnd) []kvsRPC.RPCClient {
 	sa := make([]*labrpc.ClientEnd, len(kvh))
 	copy(sa, kvh)
 	for i := range sa {
 		j := rand.Intn(i + 1)
 		sa[i], sa[j] = sa[j], sa[i]
 	}
-	return sa
+
+	clients := make([]kvsRPC.RPCClient, len(kvh))
+	for i := range sa {
+		clients[i] = kvsRPC.NewLabRPCClient(sa[i])
+	}
+	return clients
 }
 
 type group struct {
@@ -125,18 +132,18 @@ func (cfg *config) makeClient() *Clerk {
 	defer cfg.mu.Unlock()
 
 	// ClientEnds to talk to controler service.
-	ends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	ends := make([]kvsRPC.RPCClient, cfg.nctrlers)
 	endnames := make([]string, cfg.n)
 	for j := 0; j < cfg.nctrlers; j++ {
 		endnames[j] = randstring(20)
-		ends[j] = cfg.net.MakeEnd(endnames[j])
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(endnames[j]))
 		cfg.net.Connect(endnames[j], cfg.ctrlername(j))
 		cfg.net.Enable(endnames[j], true)
 	}
 
-	ck := MakeClerk(ends, func(servername string) *labrpc.ClientEnd {
+	ck := MakeClerk(ends, func(servername string) kvsRPC.RPCClient {
 		name := randstring(20)
-		end := cfg.net.MakeEnd(name)
+		end := kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(name))
 		cfg.net.Connect(name, servername)
 		cfg.net.Enable(name, true)
 		return end
@@ -209,6 +216,17 @@ func (cfg *config) ShutdownGroup(gi int) {
 func (cfg *config) StartServer(gi int, i int) {
 	cfg.mu.Lock()
 
+
+	labgob.Register(Op{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(map[string]string{})
+	labgob.Register(map[int64]CacheResponse{})
+	labgob.Register(map[int]bool{})
+	labgob.Register(CacheResponse{})
+	labgob.Register([]int{})
+	labgob.Register(map[int][]string{})
+	labgob.Register(shardctrler.Op{})
+
 	gg := cfg.groups[gi]
 
 	// a fresh set of outgoing ClientEnd names
@@ -219,19 +237,19 @@ func (cfg *config) StartServer(gi int, i int) {
 	}
 
 	// and the connections to other servers in this group.
-	ends := make([]*labrpc.ClientEnd, cfg.n)
+	ends := make([]kvsRPC.RPCClient, cfg.n)
 	for j := 0; j < cfg.n; j++ {
-		ends[j] = cfg.net.MakeEnd(gg.endnames[i][j])
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(gg.endnames[i][j]))
 		cfg.net.Connect(gg.endnames[i][j], cfg.servername(gg.gid, j))
 		cfg.net.Enable(gg.endnames[i][j], true)
 	}
 
 	// ends to talk to shardctrler service
-	mends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	mends := make([]kvsRPC.RPCClient, cfg.nctrlers)
 	gg.mendnames[i] = make([]string, cfg.nctrlers)
 	for j := 0; j < cfg.nctrlers; j++ {
 		gg.mendnames[i][j] = randstring(20)
-		mends[j] = cfg.net.MakeEnd(gg.mendnames[i][j])
+		mends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(gg.mendnames[i][j]))
 		cfg.net.Connect(gg.mendnames[i][j], cfg.ctrlername(j))
 		cfg.net.Enable(gg.mendnames[i][j], true)
 	}
@@ -250,9 +268,9 @@ func (cfg *config) StartServer(gi int, i int) {
 
 	gg.servers[i] = StartServer(ends, i, gg.saved[i], cfg.maxraftstate,
 		gg.gid, mends,
-		func(servername string) *labrpc.ClientEnd {
+		func(servername string) kvsRPC.RPCClient {
 			name := randstring(20)
-			end := cfg.net.MakeEnd(name)
+			end := kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(name))
 			cfg.net.Connect(name, servername)
 			cfg.net.Enable(name, true)
 			return end
@@ -274,10 +292,10 @@ func (cfg *config) StartGroup(gi int) {
 
 func (cfg *config) StartCtrlerserver(i int) {
 	// ClientEnds to talk to other controler replicas.
-	ends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	ends := make([]kvsRPC.RPCClient, cfg.nctrlers)
 	for j := 0; j < cfg.nctrlers; j++ {
 		endname := randstring(20)
-		ends[j] = cfg.net.MakeEnd(endname)
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(endname))
 		cfg.net.Connect(endname, cfg.ctrlername(j))
 		cfg.net.Enable(endname, true)
 	}
@@ -296,10 +314,10 @@ func (cfg *config) StartCtrlerserver(i int) {
 
 func (cfg *config) shardclerk() *shardctrler.Clerk {
 	// ClientEnds to talk to ctrler service.
-	ends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	ends := make([]kvsRPC.RPCClient, cfg.nctrlers)
 	for j := 0; j < cfg.nctrlers; j++ {
 		name := randstring(20)
-		ends[j] = cfg.net.MakeEnd(name)
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(name))
 		cfg.net.Connect(name, cfg.ctrlername(j))
 		cfg.net.Enable(name, true)
 	}

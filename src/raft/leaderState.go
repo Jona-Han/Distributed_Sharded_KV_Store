@@ -83,7 +83,7 @@ func (ls *LeaderState) sendLog(server int, term int) {
 
 	ls.rf.mu.Unlock()
 	reply := AppendEntriesReply{}
-	ok := ls.rf.peers[server].Call("Raft.AppendEntries", &args, &reply)
+	ok, _ := ls.rf.peers[server].Call("Raft.AppendEntries", &args, &reply)
 	ls.rf.mu.Lock()
 
 	if !ok {
@@ -127,7 +127,7 @@ func (ls *LeaderState) sendSnapshot(server int, term int) {
 	reply := InstallSnapshotReply{}
 	ls.rf.mu.Unlock()
 
-	ok := ls.rf.peers[server].Call("Raft.InstallSnapshot", &args, &reply)
+	ok, _ := ls.rf.peers[server].Call("Raft.InstallSnapshot", &args, &reply)
 
 	ls.rf.mu.Lock()
 	if !ok {

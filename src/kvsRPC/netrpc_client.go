@@ -14,6 +14,10 @@ func NewNetRPCClient(address string) (*NetRPCClient, error) {
     return &NetRPCClient{client: client}, nil
 }
 
-func (c *NetRPCClient) Call(serviceMethod string, args interface{}, reply interface{}) error {
-    return c.client.Call(serviceMethod, args, reply)
+func (c *NetRPCClient) Call(serviceMethod string, args interface{}, reply interface{}) (bool, error) {
+    err := c.client.Call(serviceMethod, args, reply)
+    if err != nil {
+        return false, err
+    }
+    return true, nil
 }

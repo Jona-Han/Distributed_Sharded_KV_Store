@@ -6,7 +6,7 @@ built on top of a Raft-based replication system. It handles client key-value ope
 package shardkv
 
 import (
-	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 	"cpsc416/shardctrler"
 	"time"
 	"sync"
@@ -81,7 +81,7 @@ func (kv *ShardKV) sendReceiptConfirmations(shardsByGroup map[int]map[int]bool, 
 
 // sendShardReceiptConfirmation sends a shard receipt confirmation request to a specified group.
 func (kv *ShardKV) sendShardReceiptConfirmation(args *ConfirmShardReceiptArgs, group []string) {
-	servers := make([]*labrpc.ClientEnd, len(group))
+	servers := make([]kvsRPC.RPCClient, len(group))
 	for i, serverName := range group {
 		servers[i] = kv.make_end(serverName)
 	}
@@ -92,7 +92,7 @@ func (kv *ShardKV) sendShardReceiptConfirmation(args *ConfirmShardReceiptArgs, g
 		for si := 0; si < len(servers); si++ {
 			go func() {
 				rep := ConfirmShardReceiptReply{}
-				ok := servers[si].Call("ShardKV.ConfirmShardReceipt", args, &rep)
+				ok, _ := servers[si].Call("ShardKV.ConfirmShardReceipt", args, &rep)
 				if ok {
 					replyCh <- &rep
 				}

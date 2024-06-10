@@ -69,7 +69,7 @@ func (rf *Raft) sendVotes(args *RequestVoteArgs) {
 func (rf *Raft) sendRequestVote(voteChan chan bool, server int, args *RequestVoteArgs) {
 	reply := RequestVoteReply{}
 
-	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
+	ok, _ := rf.peers[server].Call("Raft.RequestVote", args, &reply)
 
 	if ok && reply.VoteGranted {
 		voteChan <- true

@@ -5,7 +5,9 @@ It allows joining new groups, leaving groups, and moving shards between groups.
 package shardctrler
 
 import "cpsc416/labrpc"
+import "cpsc416/labgob"
 import "cpsc416/raft"
+import "cpsc416/kvsRPC"
 import "testing"
 import "os"
 import crand "crypto/rand"
@@ -23,14 +25,19 @@ func randstring(n int) string {
 }
 
 // Randomize server handles
-func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
+func random_handles(kvh []*labrpc.ClientEnd) []kvsRPC.RPCClient {
 	sa := make([]*labrpc.ClientEnd, len(kvh))
 	copy(sa, kvh)
 	for i := range sa {
 		j := rand.Intn(i + 1)
 		sa[i], sa[j] = sa[j], sa[i]
 	}
-	return sa
+
+	clients := make([]kvsRPC.RPCClient, len(kvh))
+	for i := range sa {
+		clients[i] = kvsRPC.NewLabRPCClient(sa[i])
+	}
+	return clients
 }
 
 type config struct {
@@ -167,6 +174,8 @@ func (cfg *config) makeClient(to []int) *Clerk {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
+	labgob.Register(Op{})
+
 	// a fresh set of ClientEnds.
 	ends := make([]*labrpc.ClientEnd, cfg.n)
 	endnames := make([]string, cfg.n)
@@ -269,9 +278,9 @@ func (cfg *config) StartServer(i int) {
 	}
 
 	// a fresh set of ClientEnds.
-	ends := make([]*labrpc.ClientEnd, cfg.n)
+	ends := make([]kvsRPC.RPCClient, cfg.n)
 	for j := 0; j < cfg.n; j++ {
-		ends[j] = cfg.net.MakeEnd(cfg.endnames[i][j])
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(cfg.endnames[i][j]))
 		cfg.net.Connect(cfg.endnames[i][j], j)
 	}
 

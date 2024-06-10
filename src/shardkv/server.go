@@ -11,10 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"cpsc416/labgob"
-	"cpsc416/labrpc"
 	"cpsc416/raft"
 	"cpsc416/shardctrler"
+	"cpsc416/kvsRPC"
 )
 
 
@@ -51,9 +50,9 @@ type ShardKV struct {
 	me           int
 	rf           *raft.Raft
 	applyCh      chan raft.ApplyMsg
-	make_end     func(string) *labrpc.ClientEnd
+	make_end     func(string) kvsRPC.RPCClient
 	gid          int
-	ctrlers      []*labrpc.ClientEnd
+	ctrlers      []kvsRPC.RPCClient
 	maxraftstate int // snapshot if log grows this big
 	dead 		 int32
 	persister	 *raft.Persister
@@ -195,19 +194,7 @@ func (kv *ShardKV) killed() bool {
 //
 // gid is this group's GID, for interacting with the shardctrler.
 //
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
-	// call labgob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
-	labgob.Register(shardctrler.Config{})
-	labgob.Register(map[string]string{})
-	labgob.Register(map[int64]CacheResponse{})
-	labgob.Register(map[int]bool{})
-	labgob.Register(CacheResponse{})
-	labgob.Register([]int{})
-	labgob.Register(map[int][]string{})
-	
-
+func StartServer(servers []kvsRPC.RPCClient, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []kvsRPC.RPCClient, make_end func(string) kvsRPC.RPCClient) *ShardKV {
 	kv := new(ShardKV)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
@@ -216,7 +203,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.ctrlers = ctrlers
 	kv.persister = persister
 
-	
 	logger, err := NewLogger(1)
 	if err != nil {
 		fmt.Println("Couldn't open the log file", err)

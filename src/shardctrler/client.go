@@ -5,7 +5,7 @@ It allows joining new groups, leaving groups, and moving shards between groups.
 package shardctrler
 
 import (
-	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 	"time"
 	"crypto/rand"
 	"math/big"
@@ -13,7 +13,7 @@ import (
 
 // Clerk represents a client that communicates with shard controller servers.
 type Clerk struct {
-	servers []*labrpc.ClientEnd		// List of servers to communicate with
+	servers  []kvsRPC.RPCClient			// List of servers to communicate with
 	clerkId        int64			// Unique ID for this Clerk
 	seq 		   int64			// Sequence number for requests
 }
@@ -27,7 +27,7 @@ func nrand() int64 {
 }
 
 // MakeClerk creates a new Clerk instance with the given servers.
-func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
+func MakeClerk(servers []kvsRPC.RPCClient) *Clerk {
 	ck := &Clerk {
 		servers: servers,
 		clerkId:    nrand(),
@@ -51,7 +51,7 @@ func (ck *Clerk) Query(num int) Config {
 		// try each known server.
 		for _, srv := range ck.servers {
 			var reply QueryReply
-			ok := srv.Call("ShardCtrler.Query", args, &reply)
+			ok, _ := srv.Call("ShardCtrler.Query", args, &reply)
 			if ok && reply.WrongLeader == false {
 				return reply.Config
 			}
@@ -73,7 +73,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 		// try each known server.
 		for _, srv := range ck.servers {
 			var reply JoinReply
-			ok := srv.Call("ShardCtrler.Join", args, &reply)
+			ok, _ := srv.Call("ShardCtrler.Join", args, &reply)
 			if ok && reply.WrongLeader == false {
 				return
 			}
@@ -95,7 +95,7 @@ func (ck *Clerk) Leave(gids []int) {
 		// try each known server.
 		for _, srv := range ck.servers {
 			var reply LeaveReply
-			ok := srv.Call("ShardCtrler.Leave", args, &reply)
+			ok, _ := srv.Call("ShardCtrler.Leave", args, &reply)
 			if ok && reply.WrongLeader == false {
 				return
 			}
@@ -118,7 +118,7 @@ func (ck *Clerk) Move(shard int, gid int) {
 		// try each known server.
 		for _, srv := range ck.servers {
 			var reply MoveReply
-			ok := srv.Call("ShardCtrler.Move", args, &reply)
+			ok, _ := srv.Call("ShardCtrler.Move", args, &reply)
 			if ok && reply.WrongLeader == false {
 				return
 			}

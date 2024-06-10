@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"cpsc416/labgob"
 	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 	"log"
 	"math/rand"
 	"runtime"
@@ -284,9 +285,9 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	}
 
 	// a fresh set of ClientEnds.
-	ends := make([]*labrpc.ClientEnd, cfg.n)
+	ends := make([]RPCClient, cfg.n)
 	for j := 0; j < cfg.n; j++ {
-		ends[j] = cfg.net.MakeEnd(cfg.endnames[i][j])
+		ends[j] = kvsRPC.NewLabRPCClient(cfg.net.MakeEnd(cfg.endnames[i][j]))
 		cfg.net.Connect(cfg.endnames[i][j], j)
 	}
 

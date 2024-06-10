@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 	"cpsc416/shardctrler"
 )
 
@@ -185,7 +185,7 @@ type RequestShardReply struct {
 
 // sendShardRequest sends a shard request to the specified group and handles the response.
 func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardReply, group []string) {
-	servers := make([]*labrpc.ClientEnd, len(group))
+	servers := make([]kvsRPC.RPCClient, len(group))
 	for i, serverName := range group {
 		servers[i] = kv.make_end(serverName)
 	}
@@ -196,7 +196,7 @@ func (kv *ShardKV) sendShardRequest(args *RequestShardArgs, reply *RequestShardR
 		for si := 0; si < len(servers); si++ {
 			go func() {
 				rep := RequestShardReply{}
-				ok := servers[si].Call("ShardKV.RequestShard", args, &rep)
+				ok, _ := servers[si].Call("ShardKV.RequestShard", args, &rep)
 				if ok {
 					replyCh <- &rep
 				}

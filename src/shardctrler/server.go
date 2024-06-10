@@ -5,9 +5,8 @@ It allows joining new groups, leaving groups, and moving shards between groups.
 package shardctrler
 
 import (
-	"cpsc416/labgob"
-	"cpsc416/labrpc"
 	"cpsc416/raft"
+	"cpsc416/kvsRPC"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -169,7 +168,7 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 }
 
 // StartServer initializes a new ShardCtrler server.
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
+func StartServer(servers []kvsRPC.RPCClient, me int, persister *raft.Persister) *ShardCtrler {
 	logger, err := NewLogger(1)
 	if err != nil {
 		fmt.Println("Couldn't open the log file", err)
@@ -182,7 +181,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.configs = make([]Config, 1)
 	sc.configs[0].Groups = map[int][]string{}
 
-	labgob.Register(Op{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 

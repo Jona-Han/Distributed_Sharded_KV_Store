@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 	"cpsc416/shardctrler"
 )
 
@@ -47,7 +47,7 @@ func nrand() int64 {
 type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
-	make_end func(string) *labrpc.ClientEnd
+	make_end func(string) kvsRPC.RPCClient
 	clerkId        int64
 	seq 		   int64
 
@@ -67,7 +67,7 @@ type Clerk struct {
 // make_end(servername) turns a server name from a
 // Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
 // send RPCs.
-func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
+func MakeClerk(ctrlers []kvsRPC.RPCClient, make_end func(string) kvsRPC.RPCClient) *Clerk {
 	ck := new(Clerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
@@ -104,7 +104,7 @@ func (ck *Clerk) Get(key string) string {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
+				ok, _ := srv.Call("ShardKV.Get", &args, &reply)
 
 				if ok && (reply.Err == OK) {
 					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d Get operation success for seq %d", ck.clerkId, ck.seq))
@@ -144,7 +144,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
 				// ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d sent %s operation for key %s to server %v", ck.clerkId, args.Op, key, si))
-				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
+				ok, _ := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
 					ck.logger.Log(LogTopicClerk, fmt.Sprintf("C%d - %s operation success for seq %d", ck.clerkId, args.Op, ck.seq))
 					return

@@ -25,10 +25,11 @@ import (
 	"time"
 	"log"
 
-	// "cpsc416/labgob"
 	"cpsc416/labgob"
-	"cpsc416/labrpc"
+	"cpsc416/kvsRPC"
 )
+
+type RPCClient = kvsRPC.RPCClient
 
 const (
 	Follower = iota
@@ -63,7 +64,7 @@ type LogEntry struct {
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	peers     []RPCClient // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
@@ -307,7 +308,7 @@ func (rf *Raft) transitionToFollower(vote int) {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-func Make(peers []*labrpc.ClientEnd, me int,
+func Make(peers []RPCClient, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
 	rf.peers = peers
