@@ -1,3 +1,4 @@
+[![Go CI](https://github.com/Jona-Han/Sharded_KVS/actions/workflows/ci.yml/badge.svg)](https://github.com/Jona-Han/Sharded_KVS/actions/workflows/ci.yml)
 
 # Distributed Sharded Key-Value Store
 
