@@ -1,4 +1,4 @@
-package shardclientmain
+package main
 
 import (
 	"fmt"

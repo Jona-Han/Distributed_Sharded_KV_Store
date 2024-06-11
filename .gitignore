@@ -1,2 +1,10 @@
 pkg/
 .vscode
+
+*.exe
+
+*.out
+*.o
+
+src/cmd/shardctrler-server/shardctrler-server
+src/cmd/shardctrler-client/shardctrler-client
