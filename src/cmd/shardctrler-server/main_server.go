@@ -23,10 +23,10 @@ func main() {
 
 	servers := make([]kvsRPC.RPCClient, len(serverList))
 	for idx, server := range serverList {
-		servers[idx] = kvsRPC.NewLabRPCClient(server)
+		servers[idx], _ = kvsRPC.NewNetRPCClient(string(server))
 	}
 
-    thisIndex = strvconv.Atoi(serviceName[len(serviceName) - 1])
+    thisIndex, _ := strconv.Atoi(string(serviceName[len(serviceName) - 1]))
 
 	gob.Register(shardctrler.Op{})
 
