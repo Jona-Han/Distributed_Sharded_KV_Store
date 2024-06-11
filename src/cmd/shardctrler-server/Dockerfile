@@ -1,18 +1,30 @@
-# Dockerfile for shardctrler server
+# Dockerfile.server
+
+# Builder stage
 FROM golang:1.20-alpine AS builder
 
-WORKDIR /app/shardctrler
+WORKDIR /app
 
-COPY go.mod go.sum ../
+# Copy go.mod and go.sum
+COPY ../../../go.mod ../../../go.sum ./
 RUN go mod download
 
+# Copy the source code
 COPY . .
-RUN go build -o server main_server.go
 
+# Build the Go application
+RUN go build -o shardctrler-server
+
+# Final stage
 FROM alpine:latest
 
 WORKDIR /root/shardctrler
-COPY --from=builder /app/shardctrler/server .
 
+# Copy the binary from the builder stage
+COPY --from=builder /app/shardctrler-server .
+
+# Expose the port
 EXPOSE 8080
-CMD ["./server"]
+
+# Command to run the executable
+CMD ["./shardctrler-server"]
