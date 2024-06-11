@@ -18,19 +18,20 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set working directory
-      run: cd src
-
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version-file: './go.mod'
+        go-version-file: 'src/go.mod'
+
+    - name: Set working directory
+      run: cd src
 
     - name: Install dependencies
-      run: go get .
+      run: go mod tidy
 
     - name: Build
-      run: go build -v ./...
+      run: |
+        go list ./... | grep -v '^cmd/' | xargs go build -v
 
     - name: Run tests
       run: go test ./...
