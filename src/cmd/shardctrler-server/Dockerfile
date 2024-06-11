@@ -11,7 +11,7 @@ RUN go build -o server main_server.go
 
 FROM alpine:latest
 
-WORKDIR /root/server
+WORKDIR /root/shardctrler
 COPY --from=builder /app/shardctrler/server .
 
 EXPOSE 8080

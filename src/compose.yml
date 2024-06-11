@@ -1,0 +1,58 @@
+version: '3'
+services:
+  shardctrler-server-0:
+    build:
+      context: ./cmd/shardctrler-server
+      dockerfile: Dockerfile.server
+    ports:
+      - "8081:8080"
+    networks:
+      - app-network
+    environment:
+      - SERVICE_NAME=shardctrler-server-0
+      - SERVICE_PORT=8080
+
+  shardctrler-server-1:
+    build:
+      context: ./cmd/shardctrler-server
+      dockerfile: Dockerfile.server
+    ports:
+      - "8082:8080"
+    networks:
+      - app-network
+    environment:
+      - SERVICE_NAME=shardctrler-server-1
+      - SERVICE_PORT=8080
+
+  shardctrler-server-2:
+    build:
+      context: ./cmd/shardctrler-server
+      dockerfile: Dockerfile.server
+    ports:
+      - "8083:8080"
+    networks:
+      - app-network
+    environment:
+      - SERVICE_NAME=shardctrler-server-2
+      - SERVICE_PORT=8080
+
+  shardctrler-client:
+    build:
+      context: ./cmd/shardctrler-client
+      dockerfile: Dockerfile.client
+    ports:
+      - "8084:8081"
+    depends_on:
+      - shardctrler-server-0
+      - shardctrler-server-1
+      - shardctrler-server-2
+    networks:
+      - app-network
+    environment:
+      - SERVER_1=shardctrler-server-0:8080
+      - SERVER_2=shardctrler-server-1:8080
+      - SERVER_3=shardctrler-server-2:8080
+
+networks:
+  app-network:
+    driver: bridge

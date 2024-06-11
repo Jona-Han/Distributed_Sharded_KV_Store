@@ -11,7 +11,7 @@ RUN go build -o client main_client.go
 
 FROM alpine:latest
 
-WORKDIR /root/shardctrler/client
+WORKDIR /root/shardctrler
 COPY --from=builder /app/shardctrler/client .
 
 EXPOSE 8081
