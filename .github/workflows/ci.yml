@@ -23,17 +23,17 @@ jobs:
       with:
         go-version-file: 'src/go.mod'
 
-    - name: Set working directory
-      run: cd src
-
     - name: Install dependencies
       run: go mod tidy
+      working-directory: src
 
     - name: Build
       run: |
         go list ./... | grep -v '^cmd/' | xargs go build -v
+      working-directory: src
 
     - name: Run tests
       run: go test ./...
+      working-directory: src
 
 
