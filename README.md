@@ -28,7 +28,8 @@ The system is composed of two main components:
 - **RPC**: All communication between servers are performed through RPC.
 
 ## Prerequisites 📝
-* Go programming language (version 1.15 or later)
+* Go programming language (version 1.2 or later)
+* Docker
 * Git for version control
 * Operating System: Linux, macOS, or Windows 10
   
@@ -37,15 +38,35 @@ The system is composed of two main components:
 1. **Clone the Repository:**
     ```sh
     https://github.com/Jona-Han/Sharded_KVS.git
-    cd src/shardkv
     ```
 
 2. **Install Dependencies:**
     Ensure Go is installed and properly configured on your system.
 
-### Executing program
+3. **Setup and Run with Docker:**
+
+    Use Docker Compose to build and start the services.
+
+    ```sh
+    docker-compose up --build
+    ```
+
+    This will do the following:
+    - Build the Docker images for each server.
+    - Start the containers and set up the network.
+
+4. **Stop and Remove Containers:**
+
+    To stop and remove all the running containers, you can use the following command:
+
+    ```sh
+    docker-compose down
+    ```
+
+### Running Tests
 1. **Running the Full Test Suite:**
     ```sh
+    cd src/shardkv
     go test
     ```
 
