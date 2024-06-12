@@ -5,12 +5,12 @@ It allows joining new groups, leaving groups, and moving shards between groups.
 package shardctrler
 
 import (
-	"cpsc416/raft"
 	"cpsc416/kvsRPC"
+	"cpsc416/raft"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
-	"fmt"
 )
 
 // ShardCtrler is a controller for managing shard configurations in a distributed system.
@@ -19,36 +19,35 @@ type ShardCtrler struct {
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
-	dead int32
+	dead    int32
 
 	logger *Logger
 
-	clerkLastSeq map[int64]int64       // To check for duplicate requests
-	notifyChans  map[int64]chan Op     // Notification channels for each clerk
-	lastApplied  int                   // Index of the last applied log entry
-	configs      []Config              // Indexed by config number
+	clerkLastSeq map[int64]int64   // To check for duplicate requests
+	notifyChans  map[int64]chan Op // Notification channels for each clerk
+	lastApplied  int               // Index of the last applied log entry
+	configs      []Config          // Indexed by config number
 }
 
 // Op represents an operation to be applied by the ShardCtrler.
 type Op struct {
-	Operation 	string
-	ClerkId		int64
-	Seq 		int64
-	Servers map[int][]string
-	GIDs 		[]int
-	Shard int
-	GID   int
-	Num int
+	Operation string
+	ClerkId   int64
+	Seq       int64
+	Servers   map[int][]string
+	GIDs      []int
+	Shard     int
+	GID       int
+	Num       int
 }
-
 
 // Join handles a request to add new replica groups to the shard configuration.
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	op := Op {
-		Operation:	"Join",
-		ClerkId:	args.ClerkId,
-		Seq:		args.Seq,
-		Servers:	args.Servers,
+	op := Op{
+		Operation: "Join",
+		ClerkId:   args.ClerkId,
+		Seq:       args.Seq,
+		Servers:   args.Servers,
 	}
 
 	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
@@ -58,11 +57,11 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 // Leave handles a request to remove replica groups from the shard configuration.
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	op := Op {
-		Operation:	"Leave",
-		ClerkId:	args.ClerkId,
-		Seq:		args.Seq,
-		GIDs:		args.GIDs,
+	op := Op{
+		Operation: "Leave",
+		ClerkId:   args.ClerkId,
+		Seq:       args.Seq,
+		GIDs:      args.GIDs,
 	}
 
 	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
@@ -72,12 +71,12 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 
 // Move handles a request to move a shard to a different replica group.
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	op := Op {
-		Operation:	"Move",
-		ClerkId:	args.ClerkId,
-		Seq:		args.Seq,
-		Shard:		args.Shard,
-		GID:		args.GID,
+	op := Op{
+		Operation: "Move",
+		ClerkId:   args.ClerkId,
+		Seq:       args.Seq,
+		Shard:     args.Shard,
+		GID:       args.GID,
 	}
 
 	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
@@ -87,13 +86,13 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 
 // Query handles a request to retrieve the current or specified shard configuration.
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	op := Op {
-		Operation:	"Query",
-		ClerkId:	args.ClerkId,
-		Seq:		args.Seq,
-		Num:		args.Num,
+	op := Op{
+		Operation: "Query",
+		ClerkId:   args.ClerkId,
+		Seq:       args.Seq,
+		Num:       args.Num,
 	}
-	
+
 	result := sc.checkIfLeaderAndSendOp(op, args.ClerkId, args.Seq)
 	reply.WrongLeader = result.WrongLeader
 	reply.Err = result.Err
@@ -134,10 +133,10 @@ func (sc *ShardCtrler) checkIfLeaderAndSendOp(op Op, clerkId int64, seq int64) C
 			reply.WrongLeader = true
 			sc.mu.Unlock()
 		} else {
-			if (op.Operation == "Query") {
+			if op.Operation == "Query" {
 				configNum := resultOp.Num
 				if configNum == -1 || configNum >= len(sc.configs) {
-					reply.Config = sc.configs[len(sc.configs) - 1]
+					reply.Config = sc.configs[len(sc.configs)-1]
 				} else {
 					reply.Config = sc.configs[configNum]
 				}
@@ -147,8 +146,7 @@ func (sc *ShardCtrler) checkIfLeaderAndSendOp(op Op, clerkId int64, seq int64) C
 		}
 	}
 	return reply
-} 
-
+}
 
 // Kill stops the ShardCtrler instance.
 func (sc *ShardCtrler) Kill() {
@@ -192,7 +190,6 @@ func StartServer(servers []kvsRPC.RPCClient, me int, persister *raft.Persister) 
 	return sc
 }
 
-
 func (sc *ShardCtrler) applier() {
 	// continuously process messages from the applyCh channel
 	for !sc.killed() {
@@ -218,7 +215,7 @@ func (sc *ShardCtrler) applier() {
 			if ch, ok := sc.notifyChans[op.ClerkId]; ok {
 				select {
 				case ch <- op: // notify the waiting goroutine
-				    sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d", sc.me, op.ClerkId))
+					sc.logger.Log(LogTopicServer, fmt.Sprintf("S%d notified the goroutine for ClerkId %d", sc.me, op.ClerkId))
 				default:
 					// if the channel is already full, skip to prevent blocking.
 				}
@@ -240,6 +237,3 @@ func (sc *ShardCtrler) applyOperation(op Op) {
 		sc.applyMove(op)
 	}
 }
-
-
-

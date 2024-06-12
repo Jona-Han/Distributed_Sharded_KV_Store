@@ -15,8 +15,10 @@ This project is a robust backend implementation of a fault-tolerant sharded key/
 
 The system is composed of two main components:
 
-1. **Replica Groups**: These groups are responsible for storing and serving key/value pairs. Each group uses Raft to replicate data and handle client requests such as `Get`, `Put`, and `Append`.
+1. **Shard Replica Groups**: These groups are responsible for storing and serving key/value pairs. Each group uses Raft to replicate data and handle client requests such as `Get`, `Put`, and `Append`.
 2. **Shard Controller**: This component maintains the configuration of shard assignments to replica groups. It handles `Join`, `Leave`, `Move`, and `Query` operations to manage shard distribution dynamically.
+
+![Architecture](./images/kvs_architecture.jpg)
 
 ## Implementation Details
 

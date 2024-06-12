@@ -12,7 +12,6 @@ import (
 	"cpsc416/kvsRPC"
 )
 
-// TODO: Add ServiceIP and server_list to compose
 func main() {
     serviceName := os.Getenv("SERVICE_NAME")
     servicePort := os.Getenv("SERVICE_PORT")
