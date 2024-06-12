@@ -6,11 +6,13 @@ FROM golang:1.20-alpine AS builder
 WORKDIR /app
 
 # Copy go.mod and go.sum
-COPY ../../../go.mod ../../../go.sum ./
+COPY go.* ./
 RUN go mod download
 
 # Copy the source code
 COPY . .
+
+WORKDIR /app/cmd/shardctrler-client
 
 # Build the Go application
 RUN go build -o shardctrler-client
@@ -21,7 +23,7 @@ FROM alpine:latest
 WORKDIR /root/shardctrler
 
 # Copy the binary from the builder stage
-COPY --from=builder /app/shardctrler-client .
+COPY --from=builder /app/cmd/shardctrler-client .
 
 # Expose the port if necessary
 EXPOSE 8080
