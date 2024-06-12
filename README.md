@@ -1,12 +1,12 @@
 [![Go CI](https://github.com/Jona-Han/Sharded_KVS/actions/workflows/ci.yml/badge.svg)](https://github.com/Jona-Han/Sharded_KVS/actions/workflows/ci.yml)
 
-# Distributed Sharded Key-Value Store
+# HyperShardDB
 
-This project is a robust backend implementation of a fault-tolerant sharded key/value storage system with dynamic shard reconfiguration using Raft
+HyperShardDB is a robust fault-tolerant sharded key/value database with dynamic shard reconfiguration using Raft
 
 ## Key Features 🌟
 - **Replication**: Each shard contains at least 2*f + 1 replicas, where f is the maximum number of allowed server failures, guaranteeing fault and partition tolerance.
-- **Sharded Architecture**: Efficiently spreads keys across up to 10 shards to improve load balancing and manages shard configuration changes through a shard controller.
+- **Load Balancing and Sharded Architecture**: Efficiently spreads keys across up to 10 shards to improve load balancing and manages shard configuration changes through a shard controller.
 - **Sequential Consistency**: Utilizes the Raft consensus algorithm to guarantee an agreed-upon order of all actions.
 - **Snapshots and Shard Deletion**: Uses periodic snapshotting and shard deletion mechanisms to efficiently manage storage space.
 
@@ -25,7 +25,7 @@ The system is composed of two main components:
 - **Raft Consensus Algorithm**: Used within each replica group to manage the replication of data and ensure consistency.
 - **Configuration Management**: The shard controller periodically updates the configuration to balance load and manage the addition or removal of replica groups.
 - **Fault Tolerance**: By replicating data across multiple nodes, the system can tolerate node failures and continue to operate without data loss.
-- **RPC**: All communication between servers are performed through RPC.
+- **RPC**: All communication between servers are performed through remote procedure calls.
 
 ## Prerequisites 📝
 * Go programming language (version 1.2 or later)
@@ -37,7 +37,7 @@ The system is composed of two main components:
 
 1. **Clone the Repository:**
     ```sh
-    https://github.com/Jona-Han/Sharded_KVS.git
+    https://github.com/Jona-Han/HyperShardDB.git
     ```
 
 2. **Install Dependencies:**
@@ -48,6 +48,7 @@ The system is composed of two main components:
     Use Docker Compose to build and start the services.
 
     ```sh
+    cd src
     docker-compose up --build
     ```
 
@@ -66,7 +67,6 @@ The system is composed of two main components:
 ### Running Tests
 1. **Running the Full Test Suite:**
     ```sh
-    cd src/shardkv
-    go test
+    go test ./...
     ```
 
